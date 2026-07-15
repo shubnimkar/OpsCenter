@@ -47,9 +47,9 @@ Edit `aws_data.py` and update the `PROFILES` list to match your named profiles:
 
 ```python
 PROFILES = [
-    "main",
-    "poc",
-    "kdms",
+    "client1",
+    "client2",
+    "Org",
 ]
 ```
 
