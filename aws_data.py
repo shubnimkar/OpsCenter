@@ -1,5 +1,6 @@
 import boto3
 from database import get_connection
+from crypto import decrypt
 
 
 def get_name(tags):
@@ -30,8 +31,8 @@ def get_instances():
     for profile in profiles:
         try:
             session = boto3.Session(
-                aws_access_key_id=profile["access_key"],
-                aws_secret_access_key=profile["secret_key"],
+                aws_access_key_id=decrypt(profile["access_key"]),
+                aws_secret_access_key=decrypt(profile["secret_key"]),
                 region_name=profile["region"],
             )
             ec2 = session.client("ec2")

@@ -6,6 +6,7 @@ import psycopg2
 
 from aws_data import get_instances
 from database import get_connection, init_db
+from crypto import encrypt
 
 app = FastAPI(title="AWS EC2 Dashboard API")
 
@@ -87,7 +88,7 @@ def create_profile(payload: ProfileCreate):
                     VALUES (%s, %s, %s, %s)
                     RETURNING id, name, region
                     """,
-                    (payload.name, payload.access_key, payload.secret_key, payload.region),
+                    (payload.name, encrypt(payload.access_key), encrypt(payload.secret_key), payload.region),
                 )
                 row = cur.fetchone()
             conn.commit()
@@ -104,6 +105,11 @@ def patch_profile(profile_id: int, payload: ProfileUpdate):
         raise HTTPException(status_code=400, detail="No fields provided to update")
 
     # Build SET clause dynamically from provided fields only
+    # Encrypt credential fields before storing
+    if "access_key" in updates:
+        updates["access_key"] = encrypt(updates["access_key"])
+    if "secret_key" in updates:
+        updates["secret_key"] = encrypt(updates["secret_key"])
     set_clause = ", ".join(f"{col} = %s" for col in updates)
     values = list(updates.values()) + [profile_id]
 
