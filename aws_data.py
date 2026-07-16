@@ -16,7 +16,7 @@ def get_profiles_from_db():
     """Fetch all profiles stored in the database."""
     with get_connection() as conn:
         with conn.cursor() as cur:
-            cur.execute("SELECT name, access_key, secret_key, region FROM profiles ORDER BY name")
+            cur.execute("SELECT name, access_key, secret_key, region, color, env_tag FROM profiles ORDER BY name")
             return cur.fetchall()
 
 
@@ -44,6 +44,8 @@ def get_instances():
                         rows.append(
                             {
                                 "Profile": profile["name"],
+                                "ProfileColor": profile["color"],
+                                "ProfileEnvTag": profile["env_tag"],
                                 "Name": get_name(instance.get("Tags")),
                                 "State": instance["State"]["Name"],
                                 "Instance ID": instance["InstanceId"],
@@ -58,6 +60,8 @@ def get_instances():
             # Don't let one bad profile break the entire response
             rows.append({
                 "Profile": profile["name"],
+                "ProfileColor": profile["color"],
+                "ProfileEnvTag": profile.get("env_tag", "other"),
                 "Name": f"Error: {str(e)}",
                 "State": "error",
                 "Instance ID": "-",
