@@ -10,6 +10,7 @@ export interface Instance {
   "Private IP": string;
   "Public DNS": string;
   AZ: string;
+  CachedAt?: string; // ISO timestamp of when the cache row was last written
 }
 
 export type EnvTag = "prod" | "staging" | "dev" | "sandbox" | "other";

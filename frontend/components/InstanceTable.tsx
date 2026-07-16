@@ -49,6 +49,7 @@ const COLUMNS: { key: SortKey; label: string }[] = [
 export default function InstanceTable({ instances, loading, onClearFilters, hasActiveFilters }: InstanceTableProps) {
   const [sortKey, setSortKey] = useState<SortKey>("Name");
   const [sortDir, setSortDir] = useState<SortDir>("asc");
+  const [copiedSshId, setCopiedSshId] = useState<string | null>(null);
 
   const handleSort = (key: SortKey) => {
     if (key === sortKey) {
@@ -164,16 +165,24 @@ export default function InstanceTable({ instances, loading, onClearFilters, hasA
                       <div className="flex items-center gap-1">
                         {/* Copy SSH */}
                         <button
-                          onClick={() => navigator.clipboard.writeText(sshCmd)}
+                          onClick={() => {
+                            navigator.clipboard.writeText(sshCmd);
+                            setCopiedSshId(inst["Instance ID"]);
+                            setTimeout(() => setCopiedSshId(null), 1500);
+                          }}
                           disabled={!hasIp}
                           title={hasIp ? `Copy: ${sshCmd}` : "No public IP"}
                           className={`p-1.5 rounded text-xs font-mono transition-colors ${
                             hasIp
-                              ? "text-slate-500 hover:text-slate-700 hover:bg-slate-100 dark:text-slate-400 dark:hover:text-slate-200 dark:hover:bg-white/5"
+                              ? copiedSshId === inst["Instance ID"]
+                                ? "text-emerald-500 bg-emerald-50 dark:bg-emerald-950/30"
+                                : "text-slate-500 hover:text-slate-700 hover:bg-slate-100 dark:text-slate-400 dark:hover:text-slate-200 dark:hover:bg-white/5"
                               : "text-slate-300 dark:text-slate-700 cursor-not-allowed"
                           }`}
                         >
-                          <Terminal size={14} />
+                          {copiedSshId === inst["Instance ID"]
+                            ? <Check size={14} />
+                            : <Terminal size={14} />}
                         </button>
                         {/* AWS Console */}
                         <a

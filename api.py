@@ -6,9 +6,9 @@ import psycopg2
 import boto3
 from botocore.exceptions import ClientError, NoCredentialsError
 
-from aws_data import get_instances
 from database import get_connection, init_db
 from crypto import encrypt, decrypt
+from scheduler import start_scheduler, stop_scheduler, get_scheduler_status, trigger_poll, reschedule_job, MIN_INTERVAL_SECONDS, MAX_INTERVAL_SECONDS
 
 app = FastAPI(title="AWS EC2 Dashboard API")
 
@@ -23,6 +23,12 @@ app.add_middleware(
 @app.on_event("startup")
 def startup():
     init_db()
+    start_scheduler()
+
+
+@app.on_event("shutdown")
+def shutdown():
+    stop_scheduler()
 
 
 # ── Schemas ──────────────────────────────────────────────────────────────────
@@ -131,7 +137,77 @@ class ConnectionTestResponse(BaseModel):
 
 @app.get("/api/instances")
 def instances():
-    return get_instances()
+    """
+    Returns cached EC2 instance data from Postgres.
+    The background scheduler keeps this table fresh (default: every 5 minutes).
+    Falls back to an empty list if the cache has never been populated yet.
+    """
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT
+                    profile_name  AS "Profile",
+                    profile_color AS "ProfileColor",
+                    profile_env   AS "ProfileEnvTag",
+                    name          AS "Name",
+                    state         AS "State",
+                    instance_id   AS "Instance ID",
+                    instance_type AS "Instance Type",
+                    public_ip     AS "Public IP",
+                    private_ip    AS "Private IP",
+                    public_dns    AS "Public DNS",
+                    az            AS "AZ",
+                    cached_at     AS "CachedAt"
+                FROM instance_cache
+                ORDER BY profile_name, name
+            """)
+            return cur.fetchall()
+
+
+# ── Scheduler ─────────────────────────────────────────────────────────────────
+
+@app.get("/api/scheduler/status")
+def scheduler_status():
+    """
+    Returns scheduler metadata: last run time, next run time, status, and any errors.
+    """
+    return get_scheduler_status()
+
+
+@app.post("/api/scheduler/trigger", status_code=202)
+def scheduler_trigger():
+    """
+    Manually trigger an immediate EC2 poll outside the normal interval.
+    Runs asynchronously — returns immediately; the poll runs in the background.
+    """
+    return trigger_poll()
+
+
+class SchedulerConfigUpdate(BaseModel):
+    poll_interval_seconds: int
+
+    @field_validator("poll_interval_seconds")
+    @classmethod
+    def valid_interval(cls, v: int) -> int:
+        if not (MIN_INTERVAL_SECONDS <= v <= MAX_INTERVAL_SECONDS):
+            raise ValueError(
+                f"poll_interval_seconds must be between {MIN_INTERVAL_SECONDS} and {MAX_INTERVAL_SECONDS}"
+            )
+        return v
+
+
+@app.patch("/api/scheduler/config")
+def scheduler_config(payload: SchedulerConfigUpdate):
+    """
+    Update the poll interval at runtime — no restart required.
+    The new value is persisted to the DB and survives server restarts.
+    """
+    try:
+        return reschedule_job(payload.poll_interval_seconds)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc))
 
 
 # ── Connection test ───────────────────────────────────────────────────────────

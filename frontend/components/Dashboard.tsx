@@ -1,8 +1,8 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
-import { RefreshCw, Server, Activity, StopCircle, Copy, Check } from "lucide-react";
-import { fetchInstances } from "@/lib/api";
+import { RefreshCw, Server, Activity, StopCircle, Copy, Check, Clock, AlertTriangle } from "lucide-react";
+import { fetchInstances, fetchSchedulerStatus, triggerSchedulerPoll, updateSchedulerInterval, SchedulerStatus } from "@/lib/api";
 import { Instance } from "@/lib/types";
 import StatCard from "./StatCard";
 import InstanceTable from "./InstanceTable";
@@ -39,6 +39,93 @@ function CopyErrorButton({ error }: { error: string }) {
   );
 }
 
+// ── SchedulerBadge ─────────────────────────────────────────────────────────
+
+const INTERVAL_PRESETS = [
+  { label: "1 min",  seconds: 60 },
+  { label: "2 min",  seconds: 120 },
+  { label: "5 min",  seconds: 300 },
+  { label: "15 min", seconds: 900 },
+  { label: "30 min", seconds: 1800 },
+];
+
+function SchedulerBadge({
+  status,
+  onIntervalChange,
+}: {
+  status: SchedulerStatus | null;
+  onIntervalChange: (seconds: number) => Promise<void>;
+}) {
+  const [updating, setUpdating] = useState(false);
+
+  if (!status) return null;
+
+  const nextRun = status.next_run_at ? new Date(status.next_run_at) : null;
+  const secondsUntil = nextRun
+    ? Math.max(0, Math.round((nextRun.getTime() - Date.now()) / 1000))
+    : null;
+
+  const statusColor =
+    status.last_status === "partial"
+      ? "text-amber-600 dark:text-amber-400"
+      : status.last_status === "error"
+      ? "text-red-500 dark:text-red-400"
+      : "";
+
+  const handleChange = async (e: React.ChangeEvent<HTMLSelectElement>) => {
+    const val = parseInt(e.target.value, 10);
+    if (!val) return;
+    setUpdating(true);
+    try {
+      await onIntervalChange(val);
+    } finally {
+      setUpdating(false);
+    }
+  };
+
+  return (
+    <div className="flex items-center gap-2 text-xs text-slate-400 flex-wrap">
+      <Clock size={12} />
+      <span>
+        Auto-refresh every
+      </span>
+      {/* Interval picker */}
+      <select
+        value={status.poll_interval_seconds}
+        onChange={handleChange}
+        disabled={updating}
+        className="text-xs rounded-md border border-slate-200 bg-white text-slate-600 px-1.5 py-0.5 disabled:opacity-50 dark:border-[#2a2d3a] dark:bg-[#161825] dark:text-slate-300 cursor-pointer hover:border-indigo-400 transition-colors"
+        aria-label="Poll interval"
+      >
+        {/* If the current value isn't in presets, show it as a custom option */}
+        {!INTERVAL_PRESETS.some(p => p.seconds === status.poll_interval_seconds) && (
+          <option value={status.poll_interval_seconds}>
+            {status.poll_interval_seconds}s
+          </option>
+        )}
+        {INTERVAL_PRESETS.map(p => (
+          <option key={p.seconds} value={p.seconds}>{p.label}</option>
+        ))}
+      </select>
+      {secondsUntil !== null && (
+        <span className="text-slate-300 dark:text-slate-600">·</span>
+      )}
+      {secondsUntil !== null && (
+        <span>next in {secondsUntil}s</span>
+      )}
+      {(status.last_status === "partial" || status.last_status === "error") && (
+        <span
+          title={status.last_error ?? undefined}
+          className={`flex items-center gap-0.5 ${statusColor}`}
+        >
+          <AlertTriangle size={12} />
+          {status.last_status === "partial" ? "some profiles failed" : "poll error"}
+        </span>
+      )}
+    </div>
+  );
+}
+
 // ── Dashboard ──────────────────────────────────────────────────────────────
 
 export default function Dashboard() {
@@ -47,6 +134,7 @@ export default function Dashboard() {
   const [error, setError] = useState<string | null>(null);
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
   const [refreshing, setRefreshing] = useState(false);
+  const [schedulerStatus, setSchedulerStatus] = useState<SchedulerStatus | null>(null);
 
   // Filters
   const [search, setSearch] = useState("");
@@ -55,9 +143,30 @@ export default function Dashboard() {
   const [selectedTypes, setSelectedTypes] = useState<string[]>([]);
   const [activeStatCardFilter, setActiveStatCardFilter] = useState<string | null>(null);
 
+  const loadStatus = useCallback(async () => {
+    try {
+      const s = await fetchSchedulerStatus();
+      setSchedulerStatus(s);
+    } catch {
+      // non-critical — silently ignore
+    }
+  }, []);
+
   const load = useCallback(async (isRefresh = false) => {
-    if (isRefresh) setRefreshing(true);
-    else setLoading(true);
+    if (isRefresh) {
+      setRefreshing(true);
+      // Tell the backend to kick off a fresh AWS poll, then wait briefly
+      // before reading the cache so we get up-to-date data.
+      try {
+        await triggerSchedulerPoll();
+        // Small delay to give the background poll time to write results
+        await new Promise(r => setTimeout(r, 2000));
+      } catch {
+        // Best-effort — still reload the cache even if trigger fails
+      }
+    } else {
+      setLoading(true);
+    }
     setError(null);
 
     try {
@@ -75,9 +184,16 @@ export default function Dashboard() {
       setLoading(false);
       setRefreshing(false);
     }
-  }, []);
+    await loadStatus();
+  }, [loadStatus]);
 
   useEffect(() => { load(); }, [load]);
+
+  // Refresh the scheduler countdown every 10 seconds
+  useEffect(() => {
+    const id = setInterval(loadStatus, 10_000);
+    return () => clearInterval(id);
+  }, [loadStatus]);
 
   // ── Derived data ───────────────────────────────────────────────────────
 
@@ -120,6 +236,14 @@ export default function Dashboard() {
     }
   };
 
+  const handleIntervalChange = async (seconds: number) => {
+    try {
+      const updated = await updateSchedulerInterval(seconds);
+      setSchedulerStatus(updated);
+    } catch {
+      // non-critical — ignore silently; the badge will still show the old value
+    }
+  };
   const handleClearAll = () => {
     setSearch("");
     setSelectedProfiles([...new Set(instances.map(i => i.Profile))]);
@@ -148,8 +272,11 @@ export default function Dashboard() {
         <div>
           <h2 className="text-lg font-semibold text-slate-900 dark:text-white">Instances</h2>
           <p className="text-xs text-slate-400 mt-0.5">
-            {lastUpdated && `Updated ${lastUpdated.toLocaleTimeString()}`}
+            {lastUpdated && `Cache read at ${lastUpdated.toLocaleTimeString()}`}
           </p>
+          <div className="mt-1">
+            <SchedulerBadge status={schedulerStatus} onIntervalChange={handleIntervalChange} />
+          </div>
         </div>
         <button
           onClick={() => load(true)}
@@ -157,7 +284,7 @@ export default function Dashboard() {
           className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium border border-slate-200 bg-white text-slate-600 hover:bg-slate-50 disabled:opacity-50 transition-colors dark:border-[#2a2d3a] dark:bg-[#161825] dark:text-slate-300 dark:hover:bg-white/5"
         >
           <RefreshCw size={14} className={refreshing ? "animate-spin" : ""} />
-          Refresh
+          {refreshing ? "Polling AWS…" : "Refresh"}
         </button>
       </div>
 
