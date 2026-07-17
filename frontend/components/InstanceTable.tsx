@@ -1,10 +1,11 @@
 "use client";
 
 import { useState } from "react";
-import { ChevronUp, ChevronDown, ChevronsUpDown, Copy, Check, Terminal, ExternalLink } from "lucide-react";
+import { ChevronUp, ChevronDown, ChevronsUpDown, Copy, Check, Terminal } from "lucide-react";
 import { Instance } from "@/lib/types";
 import StateBadge from "./StateBadge";
 import SkeletonRow from "./SkeletonRow";
+import { PageSize } from "./Pagination";
 
 type SortKey = keyof Instance;
 type SortDir = "asc" | "desc";
@@ -14,6 +15,8 @@ interface InstanceTableProps {
   loading?: boolean;
   onClearFilters?: () => void;
   hasActiveFilters?: boolean;
+  page: number;
+  pageSize: PageSize;
 }
 
 function CopyButton({ text }: { text: string }) {
@@ -46,7 +49,7 @@ const COLUMNS: { key: SortKey; label: string }[] = [
 ];
 // Actions column rendered separately (not sortable)
 
-export default function InstanceTable({ instances, loading, onClearFilters, hasActiveFilters }: InstanceTableProps) {
+export default function InstanceTable({ instances, loading, onClearFilters, hasActiveFilters, page, pageSize }: InstanceTableProps) {
   const [sortKey, setSortKey] = useState<SortKey>("Name");
   const [sortDir, setSortDir] = useState<SortDir>("asc");
   const [copiedSshId, setCopiedSshId] = useState<string | null>(null);
@@ -66,6 +69,8 @@ export default function InstanceTable({ instances, loading, onClearFilters, hasA
     const cmp = String(av).localeCompare(String(bv));
     return sortDir === "asc" ? cmp : -cmp;
   });
+
+  const paginated = sorted.slice((page - 1) * pageSize, page * pageSize);
 
   const SortIcon = ({ col }: { col: SortKey }) => {
     if (col !== sortKey) return <ChevronsUpDown size={13} className="text-slate-300 dark:text-slate-600" />;
@@ -97,111 +102,101 @@ export default function InstanceTable({ instances, loading, onClearFilters, hasA
   }
 
   return (
-    <div className="overflow-x-auto rounded-xl border border-slate-200 shadow-sm dark:border-[#2a2d3a]">
-      <table className="w-full text-sm">
-        <thead>
-          <tr className="border-b border-slate-200 bg-slate-50 dark:border-[#2a2d3a] dark:bg-[#161825]">
-            {COLUMNS.map(col => (
-              <th
-                key={col.key}
-                onClick={() => handleSort(col.key)}
-                className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-slate-400 cursor-pointer hover:text-slate-600 select-none whitespace-nowrap dark:text-slate-500 dark:hover:text-slate-300"
-              >
-                <span className="inline-flex items-center gap-1">
-                  {col.label}
-                  <SortIcon col={col.key} />
-                </span>
+    <div className="rounded-xl border border-slate-200 shadow-sm dark:border-[#2a2d3a] overflow-hidden">
+      <div className="overflow-x-auto">
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="border-b border-slate-200 bg-slate-50 dark:border-[#2a2d3a] dark:bg-[#161825]">
+              {COLUMNS.map(col => (
+                <th
+                  key={col.key}
+                  onClick={() => handleSort(col.key)}
+                  className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-slate-400 cursor-pointer hover:text-slate-600 select-none whitespace-nowrap dark:text-slate-500 dark:hover:text-slate-300"
+                >
+                  <span className="inline-flex items-center gap-1">
+                    {col.label}
+                    <SortIcon col={col.key} />
+                  </span>
+                </th>
+              ))}
+              {/* Actions column — not sortable */}
+              <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-slate-400 select-none whitespace-nowrap dark:text-slate-500">
+                Actions
               </th>
-            ))}
-            {/* Actions column — not sortable */}
-            <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-slate-400 select-none whitespace-nowrap dark:text-slate-500">
-              Actions
-            </th>
-          </tr>
-        </thead>
-        <tbody className="divide-y divide-slate-100 dark:divide-[#2a2d3a]">
-          {loading
-            ? Array.from({ length: 5 }, (_, i) => <SkeletonRow key={i} columns={7} />)
-            : sorted.map((inst, i) => {
-                const region = inst.AZ ? inst.AZ.slice(0, -1) : "us-east-1";
-                const consoleUrl = `https://${region}.console.aws.amazon.com/ec2/v2/home?region=${region}#Instances:instanceId=${inst["Instance ID"]}`;
-                const sshCmd = `ssh ec2-user@${inst["Public IP"]}`;
-                const hasIp = Boolean(inst["Public IP"] && inst["Public IP"] !== "-" && inst["Public IP"] !== "");
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-slate-100 dark:divide-[#2a2d3a]">
+            {loading
+              ? Array.from({ length: 5 }, (_, i) => <SkeletonRow key={i} columns={7} />)
+              : paginated.map((inst, i) => {
+                  const sshCmd = `ssh ec2-user@${inst["Public IP"]}`;
+                  const hasIp = Boolean(inst["Public IP"] && inst["Public IP"] !== "-" && inst["Public IP"] !== "");
 
-                return (
-                  <tr
-                    key={inst["Instance ID"] + i}
-                    className="group bg-white hover:bg-slate-50 transition-colors dark:bg-[#1c1f2e] dark:hover:bg-[#222538]"
-                  >
-                    <td className="px-4 py-3 font-medium text-slate-700 whitespace-nowrap dark:text-slate-200">
-                      {inst.Name}
-                    </td>
-                    <td className="px-4 py-3">
-                      <StateBadge state={inst.State} />
-                    </td>
-                    <td className="px-4 py-3 font-mono text-xs text-slate-500 whitespace-nowrap dark:text-slate-400">
-                      <span className="inline-flex items-center">
-                        {inst["Instance ID"]}
-                        <CopyButton text={inst["Instance ID"]} />
-                      </span>
-                    </td>
-                    <td
-                      title={inst.AZ}
-                      className="px-4 py-3 text-slate-600 whitespace-nowrap dark:text-slate-300"
+                  return (
+                    <tr
+                      key={inst["Instance ID"] + i}
+                      className="group bg-white hover:bg-slate-50 transition-colors dark:bg-[#1c1f2e] dark:hover:bg-[#222538]"
                     >
-                      {inst["Instance Type"]}
-                    </td>
-                    <td className="px-4 py-3 font-mono text-xs text-slate-500 whitespace-nowrap dark:text-slate-400">
-                      <span className="inline-flex items-center">
-                        {inst["Public IP"] || "—"}
-                        {inst["Public IP"] && inst["Public IP"] !== "-" && <CopyButton text={inst["Public IP"]} />}
-                      </span>
-                    </td>
-                    <td className="px-4 py-3 font-mono text-xs text-slate-500 whitespace-nowrap dark:text-slate-400">
-                      {inst["Private IP"] || "—"}
-                    </td>
-                    {/* Actions */}
-                    <td className="px-4 py-3 whitespace-nowrap">
-                      <div className="flex items-center gap-1">
-                        {/* Copy SSH */}
-                        <button
-                          onClick={() => {
-                            navigator.clipboard.writeText(sshCmd);
-                            setCopiedSshId(inst["Instance ID"]);
-                            setTimeout(() => setCopiedSshId(null), 1500);
-                          }}
-                          disabled={!hasIp}
-                          title={hasIp ? `Copy: ${sshCmd}` : "No public IP"}
-                          className={`p-1.5 rounded text-xs font-mono transition-colors ${
-                            hasIp
-                              ? copiedSshId === inst["Instance ID"]
-                                ? "text-emerald-500 bg-emerald-50 dark:bg-emerald-950/30"
-                                : "text-slate-500 hover:text-slate-700 hover:bg-slate-100 dark:text-slate-400 dark:hover:text-slate-200 dark:hover:bg-white/5"
-                              : "text-slate-300 dark:text-slate-700 cursor-not-allowed"
-                          }`}
-                        >
-                          {copiedSshId === inst["Instance ID"]
-                            ? <Check size={14} />
-                            : <Terminal size={14} />}
-                        </button>
-                        {/* AWS Console */}
-                        <a
-                          href={consoleUrl}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          title="Open in AWS Console"
-                          className="p-1.5 rounded text-slate-500 hover:text-orange-600 hover:bg-orange-50 dark:text-slate-400 dark:hover:text-orange-400 dark:hover:bg-orange-950/30 transition-colors"
-                        >
-                          <ExternalLink size={14} />
-                        </a>
-                      </div>
-                    </td>
-                  </tr>
-                );
-              })
-          }
-        </tbody>
-      </table>
+                      <td className="px-4 py-3 font-medium text-slate-700 whitespace-nowrap dark:text-slate-200">
+                        {inst.Name}
+                      </td>
+                      <td className="px-4 py-3">
+                        <StateBadge state={inst.State} />
+                      </td>
+                      <td className="px-4 py-3 font-mono text-xs text-slate-500 whitespace-nowrap dark:text-slate-400">
+                        <span className="inline-flex items-center">
+                          {inst["Instance ID"]}
+                          <CopyButton text={inst["Instance ID"]} />
+                        </span>
+                      </td>
+                      <td
+                        title={inst.AZ}
+                        className="px-4 py-3 text-slate-600 whitespace-nowrap dark:text-slate-300"
+                      >
+                        {inst["Instance Type"]}
+                      </td>
+                      <td className="px-4 py-3 font-mono text-xs text-slate-500 whitespace-nowrap dark:text-slate-400">
+                        <span className="inline-flex items-center">
+                          {inst["Public IP"] || "—"}
+                          {inst["Public IP"] && inst["Public IP"] !== "-" && <CopyButton text={inst["Public IP"]} />}
+                        </span>
+                      </td>
+                      <td className="px-4 py-3 font-mono text-xs text-slate-500 whitespace-nowrap dark:text-slate-400">
+                        {inst["Private IP"] || "—"}
+                      </td>
+                      {/* Actions */}
+                      <td className="px-4 py-3 whitespace-nowrap">
+                        <div className="flex items-center gap-1">
+                          {/* Copy SSH */}
+                          <button
+                            onClick={() => {
+                              navigator.clipboard.writeText(sshCmd);
+                              setCopiedSshId(inst["Instance ID"]);
+                              setTimeout(() => setCopiedSshId(null), 1500);
+                            }}
+                            disabled={!hasIp}
+                            title={hasIp ? `Copy: ${sshCmd}` : "No public IP"}
+                            className={`p-1.5 rounded text-xs font-mono transition-colors ${
+                              hasIp
+                                ? copiedSshId === inst["Instance ID"]
+                                  ? "text-emerald-500 bg-emerald-50 dark:bg-emerald-950/30"
+                                  : "text-slate-500 hover:text-slate-700 hover:bg-slate-100 dark:text-slate-400 dark:hover:text-slate-200 dark:hover:bg-white/5"
+                                : "text-slate-300 dark:text-slate-700 cursor-not-allowed"
+                            }`}
+                          >
+                            {copiedSshId === inst["Instance ID"]
+                              ? <Check size={14} />
+                              : <Terminal size={14} />}
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })
+            }
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }

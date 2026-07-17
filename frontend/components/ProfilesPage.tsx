@@ -12,14 +12,9 @@ import {
 import { Profile, EnvTag } from "@/lib/types";
 import { ProfileAvatar, EnvTagBadge } from "./ProfileAvatar";
 import SlideOverDrawer from "./SlideOverDrawer";
+import Pagination, { PageSize } from "./Pagination";
 
 // ── Constants ─────────────────────────────────────────────────────────────
-const AWS_REGIONS = [
-  "us-east-1", "us-east-2", "us-west-1", "us-west-2",
-  "ap-south-1", "ap-southeast-1", "ap-southeast-2", "ap-northeast-1", "ap-northeast-2",
-  "eu-west-1", "eu-west-2", "eu-west-3", "eu-central-1", "eu-north-1",
-  "sa-east-1", "ca-central-1", "me-south-1", "af-south-1",
-];
 
 const COLOR_GROUPS = [
   { label: "Production",     hint: "red / orange",    colors: ["#ef4444", "#f97316", "#f43f5e", "#dc2626"] },
@@ -44,13 +39,13 @@ const ENV_TAG_DEFAULT_COLOR: Record<EnvTag, string> = {
 
 const EMPTY_FORM = {
   name: "", access_key: "", secret_key: "",
-  region: "us-east-1", color: ALL_COLORS[4], env_tag: "other" as EnvTag,
+  regions: ["us-east-1"], color: ALL_COLORS[4], env_tag: "other" as EnvTag,
 };
 
 // ── Types ─────────────────────────────────────────────────────────────────
 type FormValues = {
   name: string; access_key: string; secret_key: string;
-  region: string; color: string; env_tag: EnvTag;
+  regions: string[]; color: string; env_tag: EnvTag;
 };
 
 type TestStatus = "idle" | "testing" | "success" | "error";
@@ -108,6 +103,53 @@ function EnvTagSelector({
         >
           {tag.label}
         </button>
+      ))}
+    </div>
+  );
+}
+
+// ── MultiRegionPicker ─────────────────────────────────────────────────────
+const REGION_GROUPS = [
+  { label: "US East",      regions: ["us-east-1", "us-east-2"] },
+  { label: "US West",      regions: ["us-west-1", "us-west-2"] },
+  { label: "Asia Pacific", regions: ["ap-south-1", "ap-southeast-1", "ap-southeast-2", "ap-northeast-1", "ap-northeast-2"] },
+  { label: "Europe",       regions: ["eu-west-1", "eu-west-2", "eu-west-3", "eu-central-1", "eu-north-1"] },
+  { label: "Other",        regions: ["sa-east-1", "ca-central-1", "me-south-1", "af-south-1"] },
+];
+
+function MultiRegionPicker({ value, onChange }: { value: string[]; onChange: (r: string[]) => void }) {
+  const toggle = (region: string) => {
+    if (value.includes(region)) {
+      const next = value.filter(r => r !== region);
+      if (next.length > 0) onChange(next); // keep at least one
+    } else {
+      onChange([...value, region]);
+    }
+  };
+
+  return (
+    <div className="space-y-2 max-h-52 overflow-y-auto pr-1">
+      {REGION_GROUPS.map(group => (
+        <div key={group.label}>
+          <p className="text-xs font-medium text-slate-400 dark:text-slate-500 mb-1">{group.label}</p>
+          <div className="flex flex-wrap gap-1.5">
+            {group.regions.map(r => {
+              const active = value.includes(r);
+              return (
+                <button
+                  key={r} type="button" onClick={() => toggle(r)}
+                  className={`px-2 py-0.5 rounded text-xs font-mono border transition-colors ${
+                    active
+                      ? "bg-blue-600 text-white border-blue-600"
+                      : "bg-white dark:bg-transparent text-slate-500 dark:text-slate-400 border-slate-200 dark:border-[#2a2d3a] hover:border-blue-400 hover:text-blue-600 dark:hover:border-blue-500 dark:hover:text-blue-400"
+                  }`}
+                >
+                  {r}
+                </button>
+              );
+            })}
+          </div>
+        </div>
       ))}
     </div>
   );
@@ -196,13 +238,29 @@ function ProfileForm({ mode, profileId, initialValues, onSuccess, onClose }: Pro
   }, [initialValues]);
 
   const handleTest = async () => {
-    if (!form.access_key.trim() || !form.secret_key.trim()) {
+    const hasNewKeys = form.access_key.trim() && form.secret_key.trim();
+
+    // In edit mode with blank key fields, test using the saved profile's stored credentials
+    if (!hasNewKeys && mode === "edit" && profileId != null) {
+      setTestState({ status: "testing" });
+      try {
+        const result = await testSavedProfile(profileId);
+        setTestState({ status: result.ok ? "success" : "error", result });
+      } catch (e) {
+        setTestState({ status: "error", result: { ok: false, message: e instanceof Error ? e.message : "Request failed" } });
+      }
+      return;
+    }
+
+    // In add mode (or edit mode with new keys entered), require both fields
+    if (!hasNewKeys) {
       setTestState({ status: "error", result: { ok: false, message: "Enter Access Key and Secret Key first." } });
       return;
     }
+
     setTestState({ status: "testing" });
     try {
-      const result = await testConnection({ access_key: form.access_key, secret_key: form.secret_key, region: form.region });
+      const result = await testConnection({ access_key: form.access_key, secret_key: form.secret_key, region: form.regions[0] });
       setTestState({ status: result.ok ? "success" : "error", result });
     } catch (e) {
       setTestState({ status: "error", result: { ok: false, message: e instanceof Error ? e.message : "Request failed" } });
@@ -225,7 +283,7 @@ function ProfileForm({ mode, profileId, initialValues, onSuccess, onClose }: Pro
         // edit: only send changed fields
         const patch: Partial<FormValues> = {};
         if (form.name !== initialValues.name) patch.name = form.name;
-        if (form.region !== initialValues.region) patch.region = form.region;
+        if (JSON.stringify(form.regions) !== JSON.stringify(initialValues.regions)) patch.regions = form.regions;
         if (form.color !== initialValues.color) patch.color = form.color;
         if (form.env_tag !== initialValues.env_tag) patch.env_tag = form.env_tag;
         if (form.access_key.trim()) patch.access_key = form.access_key;
@@ -249,7 +307,7 @@ function ProfileForm({ mode, profileId, initialValues, onSuccess, onClose }: Pro
         <div>
           <p className="text-sm font-semibold text-slate-700 dark:text-slate-200">{form.name || "Profile name"}</p>
           <p className="text-xs text-slate-400 dark:text-slate-500 mt-0.5">
-            {form.region} · <EnvTagBadge tag={form.env_tag} />
+            {form.regions.join(", ") || "no regions"} · <EnvTagBadge tag={form.env_tag} />
           </p>
         </div>
       </div>
@@ -267,10 +325,11 @@ function ProfileForm({ mode, profileId, initialValues, onSuccess, onClose }: Pro
             onColorSuggest={c => setForm(f => ({ ...f, color: c }))} />
         </div>
         <div>
-          <label className="block text-xs font-medium text-slate-500 dark:text-slate-400 mb-1">Region</label>
-          <select value={form.region} onChange={e => setForm(f => ({ ...f, region: e.target.value }))} className={inputCls}>
-            {AWS_REGIONS.map(r => <option key={r} value={r}>{r}</option>)}
-          </select>
+          <label className="block text-xs font-medium text-slate-500 dark:text-slate-400 mb-1">
+            Regions
+            <span className="ml-1 font-normal text-slate-400 dark:text-slate-600">({form.regions.length} selected)</span>
+          </label>
+          <MultiRegionPicker value={form.regions} onChange={r => setForm(f => ({ ...f, regions: r }))} />
         </div>
         <div>
           <label className="block text-xs font-medium text-slate-500 dark:text-slate-400 mb-1">
@@ -346,6 +405,10 @@ export default function ProfilesPage() {
   // Search
   const [search, setSearch] = useState("");
 
+  // Pagination
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState<PageSize>(10);
+
   const load = useCallback(async () => {
     setLoading(true); setError(null);
     try {
@@ -405,14 +468,16 @@ export default function ProfilesPage() {
 
   // ── Build initial form values for the drawer ─────────────────────────────
   const drawerInitialValues: FormValues = drawerProfile
-    ? { name: drawerProfile.name, access_key: "", secret_key: "", region: drawerProfile.region, color: drawerProfile.color, env_tag: drawerProfile.env_tag }
+    ? { name: drawerProfile.name, access_key: "", secret_key: "", regions: drawerProfile.regions, color: drawerProfile.color, env_tag: drawerProfile.env_tag }
     : { ...EMPTY_FORM };
 
   const filtered = profiles.filter(p =>
     p.name.toLowerCase().includes(search.toLowerCase()) ||
-    p.region.toLowerCase().includes(search.toLowerCase()) ||
+    p.regions.some(r => r.toLowerCase().includes(search.toLowerCase())) ||
     p.env_tag.toLowerCase().includes(search.toLowerCase())
   );
+
+  const paginatedProfiles = filtered.slice((page - 1) * pageSize, page * pageSize);
 
   return (
     <div className="p-6 overflow-auto bg-slate-100 dark:bg-[#0f1117] min-h-screen">
@@ -434,10 +499,19 @@ export default function ProfilesPage() {
               type="text"
               placeholder="Search by name, region, or environment…"
               value={search}
-              onChange={e => setSearch(e.target.value)}
+              onChange={e => { setSearch(e.target.value); setPage(1); }}
               className="w-full bg-white dark:bg-[#161825] border border-slate-200 dark:border-[#2a2d3a] rounded-lg pl-9 pr-3 py-2 text-sm text-slate-700 dark:text-slate-200 placeholder-slate-400 dark:placeholder-slate-600 focus:outline-none focus:border-blue-500 transition-colors"
             />
           </div>
+          {!loading && !error && filtered.length > 0 && (
+            <Pagination
+              total={filtered.length}
+              page={page}
+              pageSize={pageSize}
+              onPageChange={setPage}
+              onPageSizeChange={(s) => { setPageSize(s); setPage(1); }}
+            />
+          )}
           <button
             onClick={openAddDrawer}
             className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors whitespace-nowrap bg-blue-600 hover:bg-blue-700 text-white"
@@ -493,7 +567,7 @@ export default function ProfilesPage() {
             </div>
           ) : (
             <ul className="divide-y divide-slate-100 dark:divide-[#2a2d3a]">
-              {filtered.map(profile => (
+              {paginatedProfiles.map(profile => (
                 <li key={profile.id}>
                   <div className="px-6 py-3 hover:bg-slate-50 dark:hover:bg-[#1c1f2e] transition-colors">
                     <div className="flex items-center justify-between">
@@ -505,7 +579,9 @@ export default function ProfilesPage() {
                             <p className="text-sm font-medium text-slate-800 dark:text-slate-200">{profile.name}</p>
                             <EnvTagBadge tag={profile.env_tag} />
                           </div>
-                          <p className="text-xs text-slate-400 dark:text-slate-500 mt-0.5">{profile.region}</p>
+                          <p className="text-xs text-slate-400 dark:text-slate-500 mt-0.5">
+                            {profile.regions.join(", ")}
+                          </p>
                         </div>
                       </div>
 

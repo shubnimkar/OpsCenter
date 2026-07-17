@@ -7,6 +7,7 @@ import { Instance } from "@/lib/types";
 import StatCard from "./StatCard";
 import InstanceTable from "./InstanceTable";
 import FilterToolbar from "./FilterToolbar";
+import { PageSize } from "./Pagination";
 
 // ── CopyErrorButton ────────────────────────────────────────────────────────
 
@@ -143,6 +144,10 @@ export default function Dashboard() {
   const [selectedTypes, setSelectedTypes] = useState<string[]>([]);
   const [activeStatCardFilter, setActiveStatCardFilter] = useState<string | null>(null);
 
+  // Pagination
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState<PageSize>(10);
+
   const loadStatus = useCallback(async () => {
     try {
       const s = await fetchSchedulerStatus();
@@ -250,6 +255,7 @@ export default function Dashboard() {
     setSelectedStates([...new Set(instances.map(i => i.State))]);
     setSelectedTypes([...new Set(instances.map(i => i["Instance Type"]))]);
     setActiveStatCardFilter(null);
+    setPage(1);
   };
 
   const hasActiveFilters =
@@ -331,11 +337,15 @@ export default function Dashboard() {
           search={search}
           resultCount={filtered.length}
           totalCount={total}
-          onSearchChange={setSearch}
-          onProfilesChange={setSelectedProfiles}
-          onStatesChange={setSelectedStates}
-          onTypesChange={setSelectedTypes}
+          onSearchChange={(v) => { setSearch(v); setPage(1); }}
+          onProfilesChange={(p) => { setSelectedProfiles(p); setPage(1); }}
+          onStatesChange={(s) => { setSelectedStates(s); setPage(1); }}
+          onTypesChange={(t) => { setSelectedTypes(t); setPage(1); }}
           onClearAll={handleClearAll}
+          page={page}
+          pageSize={pageSize}
+          onPageChange={setPage}
+          onPageSizeChange={(s) => { setPageSize(s); setPage(1); }}
         />
       </div>
 
@@ -357,6 +367,8 @@ export default function Dashboard() {
           loading={loading}
           onClearFilters={handleClearAll}
           hasActiveFilters={hasActiveFilters}
+          page={page}
+          pageSize={pageSize}
         />
       )}
     </div>

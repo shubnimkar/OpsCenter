@@ -19,7 +19,7 @@ export default function TopNavbar() {
       {/* Logo */}
       <div className="flex items-center gap-2 mr-8">
         <span className="text-xl">☁️</span>
-        <span className="text-sm font-bold text-slate-900 dark:text-white">AWS EC2</span>
+        <span className="text-sm font-bold text-slate-900 dark:text-white">AWS Dashboard</span>
       </div>
 
       {/* Nav tabs */}
@@ -28,7 +28,25 @@ export default function TopNavbar() {
           href="/"
           className={pathname === "/" ? activeCls : inactiveCls}
         >
-          Instances
+          EC2
+        </Link>
+        <Link
+          href="/s3"
+          className={pathname === "/s3" ? activeCls : inactiveCls}
+        >
+          S3
+        </Link>
+        <Link
+          href="/lambda"
+          className={pathname === "/lambda" ? activeCls : inactiveCls}
+        >
+          Lambda
+        </Link>
+        <Link
+          href="/iam"
+          className={pathname.startsWith("/iam") ? activeCls : inactiveCls}
+        >
+          IAM
         </Link>
         <Link
           href="/profiles"

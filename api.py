@@ -1,7 +1,7 @@
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, field_validator
-from typing import Optional
+from typing import Optional, List
 import psycopg2
 import boto3
 from botocore.exceptions import ClientError, NoCredentialsError
@@ -10,7 +10,7 @@ from database import get_connection, init_db
 from crypto import encrypt, decrypt
 from scheduler import start_scheduler, stop_scheduler, get_scheduler_status, trigger_poll, reschedule_job, MIN_INTERVAL_SECONDS, MAX_INTERVAL_SECONDS
 
-app = FastAPI(title="AWS EC2 Dashboard API")
+app = FastAPI(title="AWS Dashboard API")
 
 app.add_middleware(
     CORSMiddleware,
@@ -40,16 +40,24 @@ class ProfileCreate(BaseModel):
     name: str
     access_key: str
     secret_key: str
-    region: str = "us-east-1"
+    regions: List[str] = ["us-east-1"]
     color: str = "#6366f1"
     env_tag: str = "other"
 
-    @field_validator("name", "access_key", "secret_key", "region")
+    @field_validator("name", "access_key", "secret_key")
     @classmethod
     def not_empty(cls, v: str) -> str:
         if not v or not v.strip():
             raise ValueError("Field must not be empty")
         return v.strip()
+
+    @field_validator("regions")
+    @classmethod
+    def valid_regions(cls, v: List[str]) -> List[str]:
+        v = [r.strip() for r in v if r and r.strip()]
+        if not v:
+            raise ValueError("At least one region must be specified")
+        return v
 
     @field_validator("color")
     @classmethod
@@ -73,16 +81,26 @@ class ProfileUpdate(BaseModel):
     name: Optional[str] = None
     access_key: Optional[str] = None
     secret_key: Optional[str] = None
-    region: Optional[str] = None
+    regions: Optional[List[str]] = None
     color: Optional[str] = None
     env_tag: Optional[str] = None
 
-    @field_validator("name", "access_key", "secret_key", "region", mode="before")
+    @field_validator("name", "access_key", "secret_key", mode="before")
     @classmethod
     def not_empty(cls, v):
         if v is not None and (not isinstance(v, str) or not v.strip()):
             raise ValueError("Field must not be empty")
         return v.strip() if isinstance(v, str) else v
+
+    @field_validator("regions", mode="before")
+    @classmethod
+    def valid_regions(cls, v):
+        if v is None:
+            return v
+        v = [r.strip() for r in v if r and r.strip()]
+        if not v:
+            raise ValueError("At least one region must be specified")
+        return v
 
     @field_validator("color", mode="before")
     @classmethod
@@ -108,7 +126,7 @@ class ProfileUpdate(BaseModel):
 class ProfileResponse(BaseModel):
     id: int
     name: str
-    region: str
+    regions: List[str]
     color: str
     env_tag: str
 
@@ -160,6 +178,63 @@ def instances():
                     cached_at     AS "CachedAt"
                 FROM instance_cache
                 ORDER BY profile_name, name
+            """)
+            return cur.fetchall()
+
+
+# ── S3 Buckets ────────────────────────────────────────────────────────────────
+
+@app.get("/api/s3-buckets")
+def s3_buckets():
+    """
+    Returns cached S3 bucket data from Postgres.
+    The background scheduler keeps this table fresh (default: every 5 minutes).
+    """
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT
+                    bucket_name   AS "BucketName",
+                    profile_name  AS "Profile",
+                    profile_color AS "ProfileColor",
+                    profile_env   AS "ProfileEnvTag",
+                    region        AS "Region",
+                    creation_date AS "CreationDate",
+                    cached_at     AS "CachedAt"
+                FROM s3_bucket_cache
+                ORDER BY profile_name, bucket_name
+            """)
+            return cur.fetchall()
+
+
+# ── Lambda Functions ──────────────────────────────────────────────────────────
+
+@app.get("/api/lambdas")
+def lambdas():
+    """
+    Returns cached Lambda function data from Postgres.
+    The background scheduler keeps this table fresh (default: every 5 minutes).
+    """
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT
+                    function_name AS "FunctionName",
+                    profile_name  AS "Profile",
+                    profile_color AS "ProfileColor",
+                    profile_env   AS "ProfileEnvTag",
+                    region        AS "Region",
+                    runtime       AS "Runtime",
+                    handler       AS "Handler",
+                    state         AS "State",
+                    last_modified AS "LastModified",
+                    code_size     AS "CodeSize",
+                    memory_size   AS "MemorySize",
+                    timeout       AS "Timeout",
+                    description   AS "Description",
+                    cached_at     AS "CachedAt"
+                FROM lambda_cache
+                ORDER BY profile_name, function_name
             """)
             return cur.fetchall()
 
@@ -247,11 +322,12 @@ def test_saved_profile_connection(profile_id: int):
     """
     Test the stored credentials for an existing profile.
     Decrypts keys from the DB and calls STS GetCallerIdentity.
+    Uses the first region in the profile's regions list.
     """
     with get_connection() as conn:
         with conn.cursor() as cur:
             cur.execute(
-                "SELECT access_key, secret_key, region FROM profiles WHERE id = %s",
+                "SELECT access_key, secret_key, regions FROM profiles WHERE id = %s",
                 (profile_id,),
             )
             row = cur.fetchone()
@@ -259,11 +335,13 @@ def test_saved_profile_connection(profile_id: int):
     if not row:
         raise HTTPException(status_code=404, detail="Profile not found")
 
+    region = (row["regions"] or ["us-east-1"])[0]
+
     try:
         session = boto3.Session(
             aws_access_key_id=decrypt(row["access_key"]),
             aws_secret_access_key=decrypt(row["secret_key"]),
-            region_name=row["region"],
+            region_name=region,
         )
         sts = session.client("sts")
         identity = sts.get_caller_identity()
@@ -289,7 +367,7 @@ def test_saved_profile_connection(profile_id: int):
 def list_profiles():
     with get_connection() as conn:
         with conn.cursor() as cur:
-            cur.execute("SELECT id, name, region, color, env_tag FROM profiles ORDER BY name")
+            cur.execute("SELECT id, name, regions, color, env_tag FROM profiles ORDER BY name")
             return cur.fetchall()
 
 
@@ -300,11 +378,11 @@ def create_profile(payload: ProfileCreate):
             with conn.cursor() as cur:
                 cur.execute(
                     """
-                    INSERT INTO profiles (name, access_key, secret_key, region, color, env_tag)
+                    INSERT INTO profiles (name, access_key, secret_key, regions, color, env_tag)
                     VALUES (%s, %s, %s, %s, %s, %s)
-                    RETURNING id, name, region, color, env_tag
+                    RETURNING id, name, regions, color, env_tag
                     """,
-                    (payload.name, encrypt(payload.access_key), encrypt(payload.secret_key), payload.region, payload.color, payload.env_tag),
+                    (payload.name, encrypt(payload.access_key), encrypt(payload.secret_key), payload.regions, payload.color, payload.env_tag),
                 )
                 row = cur.fetchone()
             conn.commit()
@@ -320,7 +398,6 @@ def patch_profile(profile_id: int, payload: ProfileUpdate):
     if not updates:
         raise HTTPException(status_code=400, detail="No fields provided to update")
 
-    # Build SET clause dynamically from provided fields only
     # Encrypt credential fields before storing
     if "access_key" in updates:
         updates["access_key"] = encrypt(updates["access_key"])
@@ -333,7 +410,7 @@ def patch_profile(profile_id: int, payload: ProfileUpdate):
         with get_connection() as conn:
             with conn.cursor() as cur:
                 cur.execute(
-                    f"UPDATE profiles SET {set_clause} WHERE id = %s RETURNING id, name, region, color, env_tag",
+                    f"UPDATE profiles SET {set_clause} WHERE id = %s RETURNING id, name, regions, color, env_tag",
                     values,
                 )
                 row = cur.fetchone()
@@ -355,3 +432,88 @@ def delete_profile(profile_id: int):
 
     if not deleted:
         raise HTTPException(status_code=404, detail="Profile not found")
+
+
+# ── IAM ───────────────────────────────────────────────────────────────────────
+
+@app.get("/api/iam/users")
+def iam_users():
+    """Returns cached IAM user data from Postgres."""
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT
+                    username             AS "Username",
+                    profile_name         AS "Profile",
+                    profile_color        AS "ProfileColor",
+                    profile_env          AS "ProfileEnvTag",
+                    user_id              AS "UserId",
+                    arn                  AS "Arn",
+                    path                 AS "Path",
+                    created_at           AS "CreatedAt",
+                    password_last_used   AS "PasswordLastUsed",
+                    password_created_at  AS "PasswordCreatedAt",
+                    last_activity        AS "LastActivity",
+                    mfa_enabled          AS "MfaEnabled",
+                    console_access       AS "ConsoleAccess",
+                    access_key_count     AS "AccessKeyCount",
+                    active_key_count     AS "ActiveKeyCount",
+                    access_keys_detail   AS "AccessKeysDetail",
+                    groups               AS "Groups",
+                    attached_policies    AS "AttachedPolicies",
+                    inline_policies      AS "InlinePolicies",
+                    cached_at            AS "CachedAt"
+                FROM iam_user_cache
+                ORDER BY profile_name, username
+            """)
+            return cur.fetchall()
+
+
+@app.get("/api/iam/roles")
+def iam_roles():
+    """Returns cached IAM role data from Postgres."""
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT
+                    role_name            AS "RoleName",
+                    profile_name         AS "Profile",
+                    profile_color        AS "ProfileColor",
+                    profile_env          AS "ProfileEnvTag",
+                    role_id              AS "RoleId",
+                    arn                  AS "Arn",
+                    path                 AS "Path",
+                    created_at           AS "CreatedAt",
+                    description          AS "Description",
+                    max_session_duration AS "MaxSessionDuration",
+                    attached_policies    AS "AttachedPolicies",
+                    trusted_services     AS "TrustedServices",
+                    cached_at            AS "CachedAt"
+                FROM iam_role_cache
+                ORDER BY profile_name, role_name
+            """)
+            return cur.fetchall()
+
+
+@app.get("/api/iam/groups")
+def iam_groups():
+    """Returns cached IAM group data from Postgres."""
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT
+                    group_name        AS "GroupName",
+                    profile_name      AS "Profile",
+                    profile_color     AS "ProfileColor",
+                    profile_env       AS "ProfileEnvTag",
+                    group_id          AS "GroupId",
+                    arn               AS "Arn",
+                    path              AS "Path",
+                    created_at        AS "CreatedAt",
+                    member_count      AS "MemberCount",
+                    attached_policies AS "AttachedPolicies",
+                    cached_at         AS "CachedAt"
+                FROM iam_group_cache
+                ORDER BY profile_name, group_name
+            """)
+            return cur.fetchall()

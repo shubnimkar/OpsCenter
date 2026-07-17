@@ -1,4 +1,4 @@
-import { Instance, Profile, ProfileCreate } from "./types";
+import { Instance, Profile, ProfileCreate, S3Bucket, LambdaFunction, IAMUser, IAMRole, IAMGroup } from "./types";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
@@ -9,6 +9,30 @@ export async function fetchInstances(): Promise<Instance[]> {
 
   if (!res.ok) {
     throw new Error(`Failed to fetch instances: ${res.status} ${res.statusText}`);
+  }
+
+  return res.json();
+}
+
+export async function fetchS3Buckets(): Promise<S3Bucket[]> {
+  const res = await fetch(`${API_BASE}/api/s3-buckets`, {
+    next: { revalidate: 0 },
+  });
+
+  if (!res.ok) {
+    throw new Error(`Failed to fetch S3 buckets: ${res.status} ${res.statusText}`);
+  }
+
+  return res.json();
+}
+
+export async function fetchLambdas(): Promise<LambdaFunction[]> {
+  const res = await fetch(`${API_BASE}/api/lambdas`, {
+    next: { revalidate: 0 },
+  });
+
+  if (!res.ok) {
+    throw new Error(`Failed to fetch Lambda functions: ${res.status} ${res.statusText}`);
   }
 
   return res.json();
@@ -146,5 +170,25 @@ export async function updateSchedulerInterval(seconds: number): Promise<Schedule
     const err = await res.json().catch(() => ({}));
     throw new Error(err.detail ?? `Config update failed: ${res.status}`);
   }
+  return res.json();
+}
+
+// ── IAM ───────────────────────────────────────────────────────────────────────
+
+export async function fetchIAMUsers(): Promise<IAMUser[]> {
+  const res = await fetch(`${API_BASE}/api/iam/users`, { next: { revalidate: 0 } });
+  if (!res.ok) throw new Error(`Failed to fetch IAM users: ${res.status} ${res.statusText}`);
+  return res.json();
+}
+
+export async function fetchIAMRoles(): Promise<IAMRole[]> {
+  const res = await fetch(`${API_BASE}/api/iam/roles`, { next: { revalidate: 0 } });
+  if (!res.ok) throw new Error(`Failed to fetch IAM roles: ${res.status} ${res.statusText}`);
+  return res.json();
+}
+
+export async function fetchIAMGroups(): Promise<IAMGroup[]> {
+  const res = await fetch(`${API_BASE}/api/iam/groups`, { next: { revalidate: 0 } });
+  if (!res.ok) throw new Error(`Failed to fetch IAM groups: ${res.status} ${res.statusText}`);
   return res.json();
 }

@@ -2,6 +2,7 @@
 
 import { useRef, useEffect, useState } from "react";
 import { Search, ChevronDown, X } from "lucide-react";
+import Pagination, { PageSize } from "./Pagination";
 
 interface FilterToolbarProps {
   allProfiles: { name: string; color: string }[];
@@ -18,6 +19,11 @@ interface FilterToolbarProps {
   onStatesChange: (states: string[]) => void;
   onTypesChange: (types: string[]) => void;
   onClearAll: () => void;
+  // Pagination
+  page: number;
+  pageSize: PageSize;
+  onPageChange: (p: number) => void;
+  onPageSizeChange: (s: PageSize) => void;
 }
 
 // ── Generic dropdown chip ──────────────────────────────────────────────────
@@ -176,6 +182,10 @@ export default function FilterToolbar({
   onStatesChange,
   onTypesChange,
   onClearAll,
+  page,
+  pageSize,
+  onPageChange,
+  onPageSizeChange,
 }: FilterToolbarProps) {
   const allProfileNames = allProfiles.map((p) => p.name);
   const profileColorMap = Object.fromEntries(
@@ -254,10 +264,21 @@ export default function FilterToolbar({
         </button>
       )}
 
-      {/* Result count — push to the right */}
-      <span className="ml-auto text-xs text-slate-400 dark:text-slate-500 whitespace-nowrap">
-        {resultCount} of {totalCount} instances
-      </span>
+      {/* Spacer + result count + pagination controls */}
+      <div className="ml-auto flex items-center gap-3">
+        <span className="text-xs text-slate-400 dark:text-slate-500 whitespace-nowrap">
+          {resultCount} of {totalCount} instances
+        </span>
+        {totalCount > 0 && (
+          <Pagination
+            total={resultCount}
+            page={page}
+            pageSize={pageSize}
+            onPageChange={onPageChange}
+            onPageSizeChange={onPageSizeChange}
+          />
+        )}
+      </div>
     </div>
   );
 }

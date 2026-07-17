@@ -2,7 +2,7 @@ interface StatCardProps {
   label: string;
   value: number;
   total?: number;
-  color: "blue" | "green" | "red";
+  color: "blue" | "green" | "red" | "purple";
   icon: React.ReactNode;
   onClick?: () => void;
   isActive?: boolean;
@@ -27,6 +27,12 @@ const colorMap = {
     value: "text-red-600 dark:text-red-400",
     icon:  "bg-red-50 text-red-600 dark:bg-red-500/10 dark:text-red-400",
     ring:  "ring-red-500",
+  },
+  purple: {
+    card:  "border-violet-200 bg-white dark:border-violet-500/30 dark:bg-violet-950/30",
+    value: "text-violet-600 dark:text-violet-400",
+    icon:  "bg-violet-50 text-violet-600 dark:bg-violet-500/10 dark:text-violet-400",
+    ring:  "ring-violet-500",
   },
 };
 
