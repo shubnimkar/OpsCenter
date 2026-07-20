@@ -341,4 +341,49 @@ def init_db():
                     PRIMARY KEY (zone_id, record_name, record_type, profile_name, set_identifier)
                 )
             """)
+
+            # ── SSL Certificate monitoring table ────────────────────────────
+            # User-managed domains with SSL certificate metadata fetched via
+            # direct TLS socket connections (not AWS ACM).
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS ssl_certificates (
+                    id             SERIAL       PRIMARY KEY,
+                    domain_name    VARCHAR(255) NOT NULL UNIQUE,
+                    port           INT          NOT NULL DEFAULT 443,
+                    environment    VARCHAR(50)  NOT NULL DEFAULT 'production',
+                    owner          VARCHAR(255) NOT NULL DEFAULT '',
+                    notes          TEXT         NOT NULL DEFAULT '',
+                    renewal_date   DATE,
+                    issuer         TEXT         NOT NULL DEFAULT '',
+                    valid_from     TIMESTAMPTZ,
+                    expiry_date    TIMESTAMPTZ,
+                    days_remaining INT,
+                    status         VARCHAR(20)  NOT NULL DEFAULT 'unknown',
+                    last_checked   TIMESTAMPTZ,
+                    created_at     TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+                    updated_at     TIMESTAMPTZ  NOT NULL DEFAULT NOW()
+                )
+            """)
+            # Migrations for ssl_certificates if table was created without some columns
+            cur.execute("""
+                ALTER TABLE ssl_certificates
+                ADD COLUMN IF NOT EXISTS renewal_date DATE
+            """)
+            cur.execute("""
+                ALTER TABLE ssl_certificates
+                ADD COLUMN IF NOT EXISTS owner VARCHAR(255) NOT NULL DEFAULT ''
+            """)
+            cur.execute("""
+                ALTER TABLE ssl_certificates
+                ADD COLUMN IF NOT EXISTS notes TEXT NOT NULL DEFAULT ''
+            """)
+            # Migrate: add SAN list and key algorithm columns
+            cur.execute("""
+                ALTER TABLE ssl_certificates
+                ADD COLUMN IF NOT EXISTS san_list TEXT[] NOT NULL DEFAULT '{}'
+            """)
+            cur.execute("""
+                ALTER TABLE ssl_certificates
+                ADD COLUMN IF NOT EXISTS key_algorithm VARCHAR(50) NOT NULL DEFAULT ''
+            """)
         conn.commit()

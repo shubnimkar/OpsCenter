@@ -42,6 +42,7 @@ LAMBDA_JOB_ID = "lambda_poll"
 IAM_JOB_ID = "iam_poll"
 SES_JOB_ID = "ses_poll"
 ROUTE53_JOB_ID = "route53_poll"
+SSL_JOB_ID = "ssl_poll"
 
 # ── Shared helpers ────────────────────────────────────────────────────────────
 
@@ -1100,6 +1101,18 @@ def start_scheduler() -> None:
         next_run_time=datetime.now(timezone.utc),
     )
 
+    # SSL certificates — daily refresh is sufficient; use 86400 s but honour
+    # whatever interval the user has configured (shorter interval = more frequent checks).
+    from ssl_checker import refresh_all_domains as poll_ssl
+    _scheduler.add_job(
+        poll_ssl,
+        trigger="interval",
+        seconds=max(interval, 3600),  # at least hourly to avoid hammering external hosts
+        id=SSL_JOB_ID,
+        replace_existing=True,
+        next_run_time=datetime.now(timezone.utc),
+    )
+
     _scheduler.start()
     logger.info(
         "Scheduler started — polling every %d seconds (%d minutes)",
@@ -1132,6 +1145,8 @@ def reschedule_job(new_interval_seconds: int) -> dict:
     _scheduler.reschedule_job(IAM_JOB_ID, trigger="interval", seconds=new_interval_seconds)
     _scheduler.reschedule_job(SES_JOB_ID, trigger="interval", seconds=new_interval_seconds)
     _scheduler.reschedule_job(ROUTE53_JOB_ID, trigger="interval", seconds=new_interval_seconds)
+    # SSL uses max(interval, 3600) to avoid hammering external TLS endpoints
+    _scheduler.reschedule_job(SSL_JOB_ID, trigger="interval", seconds=max(new_interval_seconds, 3600))
     _persist_interval(new_interval_seconds)
 
     logger.info(
@@ -1193,10 +1208,13 @@ def trigger_poll() -> dict:
     iam_thread    = threading.Thread(target=poll_iam,      daemon=True, name="iam-manual-poll")
     ses_thread    = threading.Thread(target=poll_ses,      daemon=True, name="ses-manual-poll")
     r53_thread    = threading.Thread(target=poll_route53,  daemon=True, name="route53-manual-poll")
+    from ssl_checker import refresh_all_domains as _ssl_poll
+    ssl_thread    = threading.Thread(target=_ssl_poll,     daemon=True, name="ssl-manual-poll")
     ec2_thread.start()
     s3_thread.start()
     lambda_thread.start()
     iam_thread.start()
     ses_thread.start()
     r53_thread.start()
-    return {"triggered": True, "message": "EC2, S3, Lambda, IAM, SES and Route 53 poll started in background"}
+    ssl_thread.start()
+    return {"triggered": True, "message": "EC2, S3, Lambda, IAM, SES, Route 53 and SSL poll started in background"}

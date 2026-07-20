@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, field_validator
 from typing import Optional, List
@@ -770,3 +770,232 @@ def route53_records(zone_id: str | None = None):
                     ORDER BY profile_name, record_name, record_type
                 """)
             return cur.fetchall()
+
+
+# ── SSL Certificate Monitoring ────────────────────────────────────────────────
+
+SSL_ENVIRONMENTS = {"production", "uat", "development"}
+
+
+class SSLDomainCreate(BaseModel):
+    domain_name: str
+    port: int = 443
+    environment: str = "production"
+    owner: str = ""
+    notes: str = ""
+
+    @field_validator("domain_name")
+    @classmethod
+    def valid_domain(cls, v: str) -> str:
+        v = v.strip().lower()
+        # Strip leading protocol if user pastes a URL
+        for prefix in ("https://", "http://"):
+            if v.startswith(prefix):
+                v = v[len(prefix):]
+        # Strip trailing slash / path
+        v = v.split("/")[0]
+        if not v:
+            raise ValueError("domain_name must not be empty")
+        return v
+
+    @field_validator("port")
+    @classmethod
+    def valid_port(cls, v: int) -> int:
+        if not (1 <= v <= 65535):
+            raise ValueError("port must be between 1 and 65535")
+        return v
+
+    @field_validator("environment")
+    @classmethod
+    def valid_environment(cls, v: str) -> str:
+        v = v.strip().lower()
+        if v not in SSL_ENVIRONMENTS:
+            raise ValueError(f"environment must be one of: {', '.join(sorted(SSL_ENVIRONMENTS))}")
+        return v
+
+
+class SSLDomainUpdate(BaseModel):
+    domain_name: Optional[str] = None
+    port: Optional[int] = None
+    environment: Optional[str] = None
+    owner: Optional[str] = None
+    notes: Optional[str] = None
+
+    @field_validator("domain_name", mode="before")
+    @classmethod
+    def valid_domain(cls, v):
+        if v is None:
+            return v
+        v = v.strip().lower()
+        for prefix in ("https://", "http://"):
+            if v.startswith(prefix):
+                v = v[len(prefix):]
+        v = v.split("/")[0]
+        if not v:
+            raise ValueError("domain_name must not be empty")
+        return v
+
+    @field_validator("port", mode="before")
+    @classmethod
+    def valid_port(cls, v):
+        if v is None:
+            return v
+        if not (1 <= int(v) <= 65535):
+            raise ValueError("port must be between 1 and 65535")
+        return int(v)
+
+    @field_validator("environment", mode="before")
+    @classmethod
+    def valid_environment(cls, v):
+        if v is None:
+            return v
+        v = v.strip().lower()
+        if v not in SSL_ENVIRONMENTS:
+            raise ValueError(f"environment must be one of: {', '.join(sorted(SSL_ENVIRONMENTS))}")
+        return v
+
+
+def _row_to_ssl_dict(row: dict) -> dict:
+    """Serialize a psycopg2 RealDictRow for the SSL endpoint response."""
+    r = dict(row)
+    # Convert datetimes → ISO strings
+    for key in ("valid_from", "expiry_date", "last_checked", "created_at", "updated_at"):
+        if r.get(key) and hasattr(r[key], "isoformat"):
+            r[key] = r[key].isoformat()
+    return r
+
+
+@app.get("/api/ssl-certificates")
+def list_ssl_certificates():
+    """Return all tracked SSL domains with their latest certificate status."""
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT
+                    id, domain_name, port, environment, owner, notes,
+                    issuer, valid_from, expiry_date,
+                    days_remaining, status, san_list, key_algorithm,
+                    last_checked, created_at, updated_at
+                FROM ssl_certificates
+                ORDER BY domain_name
+            """)
+            rows = cur.fetchall()
+    return [_row_to_ssl_dict(r) for r in rows]
+
+
+@app.post("/api/ssl-certificates", status_code=201)
+def create_ssl_certificate(payload: SSLDomainCreate, background_tasks: BackgroundTasks):
+    """
+    Add a new domain to track. Immediately triggers an async SSL certificate
+    fetch so the dashboard shows data without waiting for the next scheduler run.
+    """
+    try:
+        with get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO ssl_certificates
+                        (domain_name, port, environment, owner, notes)
+                    VALUES (%s, %s, %s, %s, %s)
+                    RETURNING
+                        id, domain_name, port, environment, owner, notes,
+                        issuer, valid_from, expiry_date,
+                        days_remaining, status, san_list, key_algorithm,
+                        last_checked, created_at, updated_at
+                    """,
+                    (
+                        payload.domain_name,
+                        payload.port,
+                        payload.environment,
+                        payload.owner,
+                        payload.notes,
+                    ),
+                )
+                row = cur.fetchone()
+            conn.commit()
+    except psycopg2.errors.UniqueViolation:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Domain '{payload.domain_name}' is already being tracked",
+        )
+
+    domain_id = row["id"]
+
+    # Kick off SSL check in the background so the response is instant
+    from ssl_checker import refresh_domain
+    background_tasks.add_task(refresh_domain, domain_id)
+
+    return _row_to_ssl_dict(row)
+
+
+@app.patch("/api/ssl-certificates/{domain_id}")
+def update_ssl_certificate(domain_id: int, payload: SSLDomainUpdate):
+    """Partial update of domain metadata."""
+    updates = {k: v for k, v in payload.model_dump().items() if v is not None}
+    if not updates:
+        raise HTTPException(status_code=400, detail="No fields provided to update")
+
+    set_clause = ", ".join(f"{col} = %s" for col in updates)
+    set_clause += ", updated_at = NOW()"
+    values = list(updates.values()) + [domain_id]
+
+    try:
+        with get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    f"""
+                    UPDATE ssl_certificates
+                    SET {set_clause}
+                    WHERE id = %s
+                    RETURNING
+                        id, domain_name, port, environment, owner, notes,
+                        issuer, valid_from, expiry_date,
+                        days_remaining, status, san_list, key_algorithm,
+                        last_checked, created_at, updated_at
+                    """,
+                    values,
+                )
+                row = cur.fetchone()
+            conn.commit()
+    except psycopg2.errors.UniqueViolation:
+        raise HTTPException(status_code=409, detail="Domain name already exists")
+
+    if not row:
+        raise HTTPException(status_code=404, detail="Domain not found")
+
+    return _row_to_ssl_dict(row)
+
+
+@app.delete("/api/ssl-certificates/{domain_id}", status_code=204)
+def delete_ssl_certificate(domain_id: int):
+    """Remove a domain from SSL monitoring."""
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "DELETE FROM ssl_certificates WHERE id = %s RETURNING id",
+                (domain_id,),
+            )
+            deleted = cur.fetchone()
+        conn.commit()
+
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Domain not found")
+
+
+@app.post("/api/ssl-certificates/{domain_id}/refresh", status_code=202)
+def refresh_ssl_certificate(domain_id: int, background_tasks: BackgroundTasks):
+    """
+    Trigger an immediate SSL check for a single domain.
+    Runs asynchronously — returns immediately.
+    """
+    # Verify domain exists first
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT id FROM ssl_certificates WHERE id = %s", (domain_id,))
+            if not cur.fetchone():
+                raise HTTPException(status_code=404, detail="Domain not found")
+
+    from ssl_checker import refresh_domain
+    background_tasks.add_task(refresh_domain, domain_id)
+
+    return {"triggered": True, "message": "SSL certificate refresh started in background"}

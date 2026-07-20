@@ -60,6 +60,12 @@ export default function TopNavbar() {
         >
           Route 53
         </Link>
+                <Link
+          href="/ssl"
+          className={pathname === "/ssl" ? activeCls : inactiveCls}
+        >
+          SSL
+        </Link>
         <Link
           href="/profiles"
           className={pathname === "/profiles" ? activeCls : inactiveCls}

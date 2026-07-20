@@ -249,3 +249,60 @@ export async function fetchRoute53Records(zoneId?: string): Promise<Route53Recor
   if (!res.ok) throw new Error(`Failed to fetch Route 53 records: ${res.status} ${res.statusText}`);
   return res.json();
 }
+
+// ── SSL Certificate Monitoring ─────────────────────────────────────────────
+
+import { SSLCertificate, SSLDomainCreate, SSLDomainUpdate } from "./types";
+
+export async function fetchSSLCertificates(): Promise<SSLCertificate[]> {
+  const res = await fetch(`${API_BASE}/api/ssl-certificates`, { next: { revalidate: 0 } });
+  if (!res.ok) throw new Error(`Failed to fetch SSL certificates: ${res.status} ${res.statusText}`);
+  return res.json();
+}
+
+export async function createSSLCertificate(data: SSLDomainCreate): Promise<SSLCertificate> {
+  const res = await fetch(`${API_BASE}/api/ssl-certificates`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(data),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail ?? `Failed to create domain: ${res.status}`);
+  }
+  return res.json();
+}
+
+export async function updateSSLCertificate(id: number, data: SSLDomainUpdate): Promise<SSLCertificate> {
+  const res = await fetch(`${API_BASE}/api/ssl-certificates/${id}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(data),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail ?? `Failed to update domain: ${res.status}`);
+  }
+  return res.json();
+}
+
+export async function deleteSSLCertificate(id: number): Promise<void> {
+  const res = await fetch(`${API_BASE}/api/ssl-certificates/${id}`, {
+    method: "DELETE",
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail ?? `Failed to delete domain: ${res.status}`);
+  }
+}
+
+export async function refreshSSLCertificate(id: number): Promise<{ triggered: boolean; message: string }> {
+  const res = await fetch(`${API_BASE}/api/ssl-certificates/${id}/refresh`, {
+    method: "POST",
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail ?? `Failed to refresh domain: ${res.status}`);
+  }
+  return res.json();
+}

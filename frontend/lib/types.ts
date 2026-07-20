@@ -212,3 +212,42 @@ export interface Route53Record {
   Failover: string;
   CachedAt?: string;
 }
+
+// ── SSL Certificate Monitoring ─────────────────────────────────────────────
+
+export type SSLStatus = "valid" | "expiring_soon" | "expired" | "error" | "unknown";
+
+export interface SSLCertificate {
+  id: number;
+  domain_name: string;
+  port: number;
+  environment: "production" | "uat" | "development";
+  owner: string;
+  notes: string;
+  issuer: string;
+  valid_from: string | null;
+  expiry_date: string | null;
+  days_remaining: number | null;
+  status: SSLStatus;
+  san_list: string[];
+  key_algorithm: string;
+  last_checked: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface SSLDomainCreate {
+  domain_name: string;
+  port?: number;
+  environment?: string;
+  owner?: string;
+  notes?: string;
+}
+
+export interface SSLDomainUpdate {
+  domain_name?: string;
+  port?: number;
+  environment?: string;
+  owner?: string;
+  notes?: string;
+}
