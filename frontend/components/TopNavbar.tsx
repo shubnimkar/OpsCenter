@@ -55,6 +55,12 @@ export default function TopNavbar() {
           SES
         </Link>
         <Link
+          href="/route53"
+          className={pathname === "/route53" ? activeCls : inactiveCls}
+        >
+          Route 53
+        </Link>
+        <Link
           href="/profiles"
           className={pathname === "/profiles" ? activeCls : inactiveCls}
         >

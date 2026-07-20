@@ -1,4 +1,4 @@
-import { Instance, Profile, ProfileCreate, ProfileSummary, S3Bucket, LambdaFunction, IAMUser, IAMRole, IAMGroup, SESIdentity, SESSendingQuota, SESAccountStats } from "./types";
+import { Instance, Profile, ProfileCreate, ProfileSummary, S3Bucket, LambdaFunction, IAMUser, IAMRole, IAMGroup, SESIdentity, SESSendingQuota, SESAccountStats, Route53Zone, Route53Record } from "./types";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
@@ -230,5 +230,22 @@ export async function fetchSESSendingQuotas(): Promise<SESSendingQuota[]> {
 export async function fetchSESAccountStats(): Promise<SESAccountStats[]> {
   const res = await fetch(`${API_BASE}/api/ses-account-stats`, { next: { revalidate: 0 } });
   if (!res.ok) throw new Error(`Failed to fetch SES account stats: ${res.status} ${res.statusText}`);
+  return res.json();
+}
+
+// ── Route 53 ─────────────────────────────────────────────────────────────────
+
+export async function fetchRoute53Zones(): Promise<Route53Zone[]> {
+  const res = await fetch(`${API_BASE}/api/route53/zones`, { next: { revalidate: 0 } });
+  if (!res.ok) throw new Error(`Failed to fetch Route 53 zones: ${res.status} ${res.statusText}`);
+  return res.json();
+}
+
+export async function fetchRoute53Records(zoneId?: string): Promise<Route53Record[]> {
+  const url = zoneId
+    ? `${API_BASE}/api/route53/records?zone_id=${encodeURIComponent(zoneId)}`
+    : `${API_BASE}/api/route53/records`;
+  const res = await fetch(url, { next: { revalidate: 0 } });
+  if (!res.ok) throw new Error(`Failed to fetch Route 53 records: ${res.status} ${res.statusText}`);
   return res.json();
 }

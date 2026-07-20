@@ -300,4 +300,45 @@ def init_db():
                     PRIMARY KEY (identity, profile_name, region)
                 )
             """)
+
+            # ── Route 53 hosted zone cache table ───────────────────────────
+            # Stores hosted zones per profile (Route 53 is a global service).
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS route53_zone_cache (
+                    zone_id          VARCHAR(64)  NOT NULL,
+                    name             VARCHAR(255) NOT NULL,
+                    profile_name     VARCHAR(255) NOT NULL,
+                    profile_color    VARCHAR(20)  NOT NULL DEFAULT '#6366f1',
+                    profile_env      VARCHAR(50)  NOT NULL DEFAULT 'other',
+                    private_zone     BOOLEAN      NOT NULL DEFAULT FALSE,
+                    comment          TEXT         NOT NULL DEFAULT '',
+                    record_count     INT          NOT NULL DEFAULT 0,
+                    caller_reference TEXT         NOT NULL DEFAULT '',
+                    tags             JSONB        NOT NULL DEFAULT '{}',
+                    cached_at        TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+                    PRIMARY KEY (zone_id, profile_name)
+                )
+            """)
+
+            # ── Route 53 DNS record cache table ────────────────────────────
+            # Stores individual DNS records per hosted zone.
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS route53_record_cache (
+                    zone_id          VARCHAR(64)  NOT NULL,
+                    record_name      TEXT         NOT NULL,
+                    record_type      VARCHAR(20)  NOT NULL,
+                    profile_name     VARCHAR(255) NOT NULL,
+                    profile_color    VARCHAR(20)  NOT NULL DEFAULT '#6366f1',
+                    profile_env      VARCHAR(50)  NOT NULL DEFAULT 'other',
+                    ttl              INT,
+                    values           TEXT[]       NOT NULL DEFAULT '{}',
+                    alias_target     TEXT,
+                    set_identifier   TEXT         NOT NULL DEFAULT '',
+                    weight           INT,
+                    region           VARCHAR(100) NOT NULL DEFAULT '',
+                    failover         VARCHAR(20)  NOT NULL DEFAULT '',
+                    cached_at        TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+                    PRIMARY KEY (zone_id, record_name, record_type, profile_name, set_identifier)
+                )
+            """)
         conn.commit()

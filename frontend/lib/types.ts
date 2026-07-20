@@ -181,3 +181,34 @@ export interface SESAccountStats {
   TotalRejects: number;
   CachedAt?: string;
 }
+
+export interface Route53Zone {
+  ZoneId: string;
+  Name: string;
+  Profile: string;
+  ProfileColor: string;
+  ProfileEnvTag: EnvTag;
+  PrivateZone: boolean;
+  Comment: string;
+  RecordCount: number;
+  CallerReference: string;
+  Tags: Record<string, string>;
+  CachedAt?: string;
+}
+
+export interface Route53Record {
+  ZoneId: string;
+  RecordName: string;
+  RecordType: string;
+  Profile: string;
+  ProfileColor: string;
+  ProfileEnvTag: EnvTag;
+  TTL: number | null;
+  Values: string[];
+  AliasTarget: string | null;
+  SetIdentifier: string;
+  Weight: number | null;
+  Region: string;
+  Failover: string;
+  CachedAt?: string;
+}

@@ -557,6 +557,100 @@ def get_ses_account_stats(profile: dict) -> list[dict]:
     return rows
 
 
+def get_route53_hosted_zones(profile: dict) -> list[dict]:
+    """Fetch Route 53 hosted zones for a single profile. Route 53 is a global service."""
+    regions = profile.get("regions") or [profile.get("region", "us-east-1")]
+    region = regions[0] if isinstance(regions, list) else regions
+
+    session = boto3.Session(
+        aws_access_key_id=decrypt(profile["access_key"]),
+        aws_secret_access_key=decrypt(profile["secret_key"]),
+        region_name=region,
+    )
+    r53 = session.client("route53")
+    rows = []
+
+    paginator = r53.get_paginator("list_hosted_zones")
+    for page in paginator.paginate():
+        for zone in page.get("HostedZones", []):
+            zone_id = zone["Id"].split("/")[-1]  # strip /hostedzone/ prefix
+            name = zone["Name"].rstrip(".")
+
+            # Record count
+            record_count = zone.get("ResourceRecordSetCount", 0)
+
+            # Tags
+            tags = {}
+            try:
+                tags_resp = r53.list_tags_for_resource(ResourceType="hostedzone", ResourceId=zone_id)
+                for tag in tags_resp.get("ResourceTagSet", {}).get("Tags", []):
+                    tags[tag["Key"]] = tag["Value"]
+            except Exception:
+                pass
+
+            rows.append({
+                "zone_id":       zone_id,
+                "name":          name,
+                "profile_name":  profile["name"],
+                "profile_color": profile["color"],
+                "profile_env":   profile.get("env_tag", "other"),
+                "private_zone":  zone.get("Config", {}).get("PrivateZone", False),
+                "comment":       zone.get("Config", {}).get("Comment") or "",
+                "record_count":  record_count,
+                "caller_reference": zone.get("CallerReference", ""),
+                "tags":          tags,
+            })
+    return rows
+
+
+def get_route53_records(profile: dict, zone_id: str) -> list[dict]:
+    """Fetch all DNS records for a specific hosted zone."""
+    regions = profile.get("regions") or [profile.get("region", "us-east-1")]
+    region = regions[0] if isinstance(regions, list) else regions
+
+    session = boto3.Session(
+        aws_access_key_id=decrypt(profile["access_key"]),
+        aws_secret_access_key=decrypt(profile["secret_key"]),
+        region_name=region,
+    )
+    r53 = session.client("route53")
+    rows = []
+
+    paginator = r53.get_paginator("list_resource_record_sets")
+    for page in paginator.paginate(HostedZoneId=zone_id):
+        for rr in page.get("ResourceRecordSets", []):
+            record_name = rr["Name"].rstrip(".")
+            record_type = rr["Type"]
+            ttl = rr.get("TTL")
+
+            # Standard records
+            values = [r["Value"] for r in rr.get("ResourceRecords", [])]
+
+            # Alias records
+            alias_target = None
+            if "AliasTarget" in rr:
+                alias = rr["AliasTarget"]
+                alias_target = alias.get("DNSName", "").rstrip(".")
+                values = [alias_target]
+
+            rows.append({
+                "zone_id":       zone_id,
+                "record_name":   record_name,
+                "record_type":   record_type,
+                "profile_name":  profile["name"],
+                "profile_color": profile["color"],
+                "profile_env":   profile.get("env_tag", "other"),
+                "ttl":           ttl,
+                "values":        values,
+                "alias_target":  alias_target,
+                "set_identifier": rr.get("SetIdentifier") or "",
+                "weight":        rr.get("Weight"),
+                "region":        rr.get("Region") or "",
+                "failover":      rr.get("Failover") or "",
+            })
+    return rows
+
+
 def get_ses_sending_quota(profile: dict) -> list[dict]:
     """Fetch SES sending quota for a single profile across all its regions."""
     regions = profile.get("regions") or [profile.get("region", "us-east-1")]

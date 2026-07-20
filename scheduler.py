@@ -41,6 +41,7 @@ S3_JOB_ID = "s3_poll"
 LAMBDA_JOB_ID = "lambda_poll"
 IAM_JOB_ID = "iam_poll"
 SES_JOB_ID = "ses_poll"
+ROUTE53_JOB_ID = "route53_poll"
 
 # ── Shared helpers ────────────────────────────────────────────────────────────
 
@@ -878,6 +879,145 @@ def poll_ses() -> None:
         logger.error("Failed to write SES cache to DB: %s", exc)
 
 
+# ── Route 53 poll ─────────────────────────────────────────────────────────────
+
+ROUTE53_JOB_ID = "route53_poll"
+
+
+def _upsert_route53_zones(conn, rows: list[dict]) -> None:
+    if not rows:
+        return
+    import json as _json
+    with conn.cursor() as cur:
+        for row in rows:
+            cur.execute(
+                """
+                INSERT INTO route53_zone_cache
+                    (zone_id, name, profile_name, profile_color, profile_env,
+                     private_zone, comment, record_count, caller_reference, tags, cached_at)
+                VALUES
+                    (%(zone_id)s, %(name)s, %(profile_name)s, %(profile_color)s, %(profile_env)s,
+                     %(private_zone)s, %(comment)s, %(record_count)s, %(caller_reference)s,
+                     %(tags)s, NOW())
+                ON CONFLICT (zone_id, profile_name)
+                DO UPDATE SET
+                    name             = EXCLUDED.name,
+                    profile_color    = EXCLUDED.profile_color,
+                    profile_env      = EXCLUDED.profile_env,
+                    private_zone     = EXCLUDED.private_zone,
+                    comment          = EXCLUDED.comment,
+                    record_count     = EXCLUDED.record_count,
+                    caller_reference = EXCLUDED.caller_reference,
+                    tags             = EXCLUDED.tags,
+                    cached_at        = NOW()
+                """,
+                {**row, "tags": _json.dumps(row.get("tags", {}))},
+            )
+
+
+def _upsert_route53_records(conn, rows: list[dict]) -> None:
+    if not rows:
+        return
+    with conn.cursor() as cur:
+        for row in rows:
+            cur.execute(
+                """
+                INSERT INTO route53_record_cache
+                    (zone_id, record_name, record_type, profile_name, profile_color, profile_env,
+                     ttl, values, alias_target, set_identifier, weight, region, failover, cached_at)
+                VALUES
+                    (%(zone_id)s, %(record_name)s, %(record_type)s, %(profile_name)s,
+                     %(profile_color)s, %(profile_env)s,
+                     %(ttl)s, %(values)s, %(alias_target)s, %(set_identifier)s,
+                     %(weight)s, %(region)s, %(failover)s, NOW())
+                ON CONFLICT (zone_id, record_name, record_type, profile_name, set_identifier)
+                DO UPDATE SET
+                    profile_color  = EXCLUDED.profile_color,
+                    profile_env    = EXCLUDED.profile_env,
+                    ttl            = EXCLUDED.ttl,
+                    values         = EXCLUDED.values,
+                    alias_target   = EXCLUDED.alias_target,
+                    weight         = EXCLUDED.weight,
+                    region         = EXCLUDED.region,
+                    failover       = EXCLUDED.failover,
+                    cached_at      = NOW()
+                """,
+                row,
+            )
+
+
+def poll_route53() -> None:
+    """
+    Fetch Route 53 hosted zones and their DNS records for every profile and refresh the cache.
+    Route 53 is a global service — one request per profile (no region loop).
+    Called by APScheduler on every interval tick and by the manual trigger endpoint.
+    """
+    from aws_data import get_route53_hosted_zones, get_route53_records
+    from botocore.exceptions import ClientError, NoCredentialsError
+
+    logger.info("Route 53 poll started")
+    profiles = []
+
+    try:
+        with get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT name, access_key, secret_key, regions, region, color, env_tag FROM profiles ORDER BY name"
+                )
+                profiles = cur.fetchall()
+    except Exception as exc:
+        logger.error("Failed to load profiles from DB for Route 53 poll: %s", exc)
+        return
+
+    if not profiles:
+        logger.info("No profiles configured — nothing to poll for Route 53")
+        return
+
+    all_zones: list[dict] = []
+    all_records: list[dict] = []
+    profile_errors: list[str] = []
+
+    for profile in profiles:
+        try:
+            zones = get_route53_hosted_zones(profile)
+            all_zones.extend(zones)
+            logger.debug("Route 53 profile %s → %d zone(s)", profile["name"], len(zones))
+
+            for zone in zones:
+                try:
+                    records = get_route53_records(profile, zone["zone_id"])
+                    all_records.extend(records)
+                    logger.debug(
+                        "Route 53 zone %s → %d record(s)", zone["zone_id"], len(records)
+                    )
+                except Exception as exc:
+                    logger.warning(
+                        "Route 53 records error for zone %s: %s", zone["zone_id"], exc
+                    )
+        except (ClientError, NoCredentialsError) as exc:
+            msg = str(exc)
+            logger.warning("AWS Route 53 error for profile %s: %s", profile["name"], msg)
+            profile_errors.append(f"{profile['name']}: {msg}")
+        except Exception as exc:
+            msg = str(exc)
+            logger.warning("Unexpected Route 53 error for profile %s: %s", profile["name"], msg)
+            profile_errors.append(f"{profile['name']}: {msg}")
+
+    try:
+        with get_connection() as conn:
+            _upsert_route53_zones(conn, all_zones)
+            _upsert_route53_records(conn, all_records)
+            conn.commit()
+        logger.info(
+            "Route 53 poll complete: %d zone(s), %d record(s) cached, %d profile error(s)",
+            len(all_zones),
+            len(all_records),
+            len(profile_errors),
+        )
+    except Exception as exc:
+        logger.error("Failed to write Route 53 cache to DB: %s", exc)
+
+
 # ── Scheduler lifecycle ───────────────────────────────────────────────────────
 def _build_jobstore():
     try:
@@ -951,6 +1091,15 @@ def start_scheduler() -> None:
         next_run_time=datetime.now(timezone.utc),
     )
 
+    _scheduler.add_job(
+        poll_route53,
+        trigger="interval",
+        seconds=interval,
+        id=ROUTE53_JOB_ID,
+        replace_existing=True,
+        next_run_time=datetime.now(timezone.utc),
+    )
+
     _scheduler.start()
     logger.info(
         "Scheduler started — polling every %d seconds (%d minutes)",
@@ -982,6 +1131,7 @@ def reschedule_job(new_interval_seconds: int) -> dict:
     _scheduler.reschedule_job(LAMBDA_JOB_ID, trigger="interval", seconds=new_interval_seconds)
     _scheduler.reschedule_job(IAM_JOB_ID, trigger="interval", seconds=new_interval_seconds)
     _scheduler.reschedule_job(SES_JOB_ID, trigger="interval", seconds=new_interval_seconds)
+    _scheduler.reschedule_job(ROUTE53_JOB_ID, trigger="interval", seconds=new_interval_seconds)
     _persist_interval(new_interval_seconds)
 
     logger.info(
@@ -1037,14 +1187,16 @@ def trigger_poll() -> dict:
     Immediately run EC2, S3, Lambda, IAM, and SES poll jobs outside the scheduler interval.
     Used by POST /api/scheduler/trigger (the dashboard Refresh button).
     """
-    ec2_thread    = threading.Thread(target=poll_ec2,    daemon=True, name="ec2-manual-poll")
-    s3_thread     = threading.Thread(target=poll_s3,     daemon=True, name="s3-manual-poll")
-    lambda_thread = threading.Thread(target=poll_lambda, daemon=True, name="lambda-manual-poll")
-    iam_thread    = threading.Thread(target=poll_iam,    daemon=True, name="iam-manual-poll")
-    ses_thread    = threading.Thread(target=poll_ses,    daemon=True, name="ses-manual-poll")
+    ec2_thread    = threading.Thread(target=poll_ec2,      daemon=True, name="ec2-manual-poll")
+    s3_thread     = threading.Thread(target=poll_s3,       daemon=True, name="s3-manual-poll")
+    lambda_thread = threading.Thread(target=poll_lambda,   daemon=True, name="lambda-manual-poll")
+    iam_thread    = threading.Thread(target=poll_iam,      daemon=True, name="iam-manual-poll")
+    ses_thread    = threading.Thread(target=poll_ses,      daemon=True, name="ses-manual-poll")
+    r53_thread    = threading.Thread(target=poll_route53,  daemon=True, name="route53-manual-poll")
     ec2_thread.start()
     s3_thread.start()
     lambda_thread.start()
     iam_thread.start()
     ses_thread.start()
-    return {"triggered": True, "message": "EC2, S3, Lambda, IAM and SES poll started in background"}
+    r53_thread.start()
+    return {"triggered": True, "message": "EC2, S3, Lambda, IAM, SES and Route 53 poll started in background"}

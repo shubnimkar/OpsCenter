@@ -695,3 +695,78 @@ def ses_sending_quotas():
                 ORDER BY profile_name, region
             """)
             return cur.fetchall()
+
+
+# ── Route 53 ─────────────────────────────────────────────────────────────────
+
+@app.get("/api/route53/zones")
+def route53_zones():
+    """Returns cached Route 53 hosted zone data from Postgres."""
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT
+                    zone_id          AS "ZoneId",
+                    name             AS "Name",
+                    profile_name     AS "Profile",
+                    profile_color    AS "ProfileColor",
+                    profile_env      AS "ProfileEnvTag",
+                    private_zone     AS "PrivateZone",
+                    comment          AS "Comment",
+                    record_count     AS "RecordCount",
+                    caller_reference AS "CallerReference",
+                    tags             AS "Tags",
+                    cached_at        AS "CachedAt"
+                FROM route53_zone_cache
+                ORDER BY profile_name, name
+            """)
+            return cur.fetchall()
+
+
+@app.get("/api/route53/records")
+def route53_records(zone_id: str | None = None):
+    """Returns cached Route 53 DNS records from Postgres, optionally filtered by zone."""
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            if zone_id:
+                cur.execute("""
+                    SELECT
+                        zone_id        AS "ZoneId",
+                        record_name    AS "RecordName",
+                        record_type    AS "RecordType",
+                        profile_name   AS "Profile",
+                        profile_color  AS "ProfileColor",
+                        profile_env    AS "ProfileEnvTag",
+                        ttl            AS "TTL",
+                        values         AS "Values",
+                        alias_target   AS "AliasTarget",
+                        set_identifier AS "SetIdentifier",
+                        weight         AS "Weight",
+                        region         AS "Region",
+                        failover       AS "Failover",
+                        cached_at      AS "CachedAt"
+                    FROM route53_record_cache
+                    WHERE zone_id = %s
+                    ORDER BY record_name, record_type
+                """, (zone_id,))
+            else:
+                cur.execute("""
+                    SELECT
+                        zone_id        AS "ZoneId",
+                        record_name    AS "RecordName",
+                        record_type    AS "RecordType",
+                        profile_name   AS "Profile",
+                        profile_color  AS "ProfileColor",
+                        profile_env    AS "ProfileEnvTag",
+                        ttl            AS "TTL",
+                        values         AS "Values",
+                        alias_target   AS "AliasTarget",
+                        set_identifier AS "SetIdentifier",
+                        weight         AS "Weight",
+                        region         AS "Region",
+                        failover       AS "Failover",
+                        cached_at      AS "CachedAt"
+                    FROM route53_record_cache
+                    ORDER BY profile_name, record_name, record_type
+                """)
+            return cur.fetchall()
