@@ -1,4 +1,4 @@
-import { Instance, Profile, ProfileCreate, S3Bucket, LambdaFunction, IAMUser, IAMRole, IAMGroup } from "./types";
+import { Instance, Profile, ProfileCreate, ProfileSummary, S3Bucket, LambdaFunction, IAMUser, IAMRole, IAMGroup, SESIdentity, SESSendingQuota, SESAccountStats } from "./types";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
@@ -128,6 +128,26 @@ export async function testSavedProfile(id: number): Promise<ConnectionTestResult
   return res.json();
 }
 
+export async function fetchProfileSummary(id: number): Promise<ProfileSummary> {
+  const res = await fetch(`${API_BASE}/api/profiles/${id}/summary`, {
+    next: { revalidate: 0 },
+  });
+  if (!res.ok) throw new Error(`Failed to fetch profile summary: ${res.status}`);
+  return res.json();
+}
+
+export async function reorderProfiles(orderedIds: number[]): Promise<void> {
+  const res = await fetch(`${API_BASE}/api/profiles/reorder`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ ordered_ids: orderedIds }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail ?? `Failed to reorder profiles: ${res.status}`);
+  }
+}
+
 // ── Scheduler ─────────────────────────────────────────────────────────────────
 
 export interface SchedulerStatus {
@@ -190,5 +210,25 @@ export async function fetchIAMRoles(): Promise<IAMRole[]> {
 export async function fetchIAMGroups(): Promise<IAMGroup[]> {
   const res = await fetch(`${API_BASE}/api/iam/groups`, { next: { revalidate: 0 } });
   if (!res.ok) throw new Error(`Failed to fetch IAM groups: ${res.status} ${res.statusText}`);
+  return res.json();
+}
+
+// ── SES ───────────────────────────────────────────────────────────────────────
+
+export async function fetchSESIdentities(): Promise<SESIdentity[]> {
+  const res = await fetch(`${API_BASE}/api/ses-identities`, { next: { revalidate: 0 } });
+  if (!res.ok) throw new Error(`Failed to fetch SES identities: ${res.status} ${res.statusText}`);
+  return res.json();
+}
+
+export async function fetchSESSendingQuotas(): Promise<SESSendingQuota[]> {
+  const res = await fetch(`${API_BASE}/api/ses-sending-quotas`, { next: { revalidate: 0 } });
+  if (!res.ok) throw new Error(`Failed to fetch SES sending quotas: ${res.status} ${res.statusText}`);
+  return res.json();
+}
+
+export async function fetchSESAccountStats(): Promise<SESAccountStats[]> {
+  const res = await fetch(`${API_BASE}/api/ses-account-stats`, { next: { revalidate: 0 } });
+  if (!res.ok) throw new Error(`Failed to fetch SES account stats: ${res.status} ${res.statusText}`);
   return res.json();
 }

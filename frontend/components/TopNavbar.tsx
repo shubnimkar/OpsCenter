@@ -49,6 +49,12 @@ export default function TopNavbar() {
           IAM
         </Link>
         <Link
+          href="/ses"
+          className={pathname === "/ses" ? activeCls : inactiveCls}
+        >
+          SES
+        </Link>
+        <Link
           href="/profiles"
           className={pathname === "/profiles" ? activeCls : inactiveCls}
         >

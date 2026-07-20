@@ -51,6 +51,27 @@ def init_db():
                 SET regions = ARRAY[region]
                 WHERE regions = '{}'
             """)
+            # Migrate: persist connection-test results so they survive restarts
+            cur.execute("""
+                ALTER TABLE profiles
+                ADD COLUMN IF NOT EXISTS last_tested_at TIMESTAMPTZ
+            """)
+            cur.execute("""
+                ALTER TABLE profiles
+                ADD COLUMN IF NOT EXISTS last_test_ok BOOLEAN
+            """)
+            cur.execute("""
+                ALTER TABLE profiles
+                ADD COLUMN IF NOT EXISTS account_id VARCHAR(32)
+            """)
+            # Migrate: manual sort order (default to id so existing rows get a stable order)
+            cur.execute("""
+                ALTER TABLE profiles
+                ADD COLUMN IF NOT EXISTS sort_order INT
+            """)
+            cur.execute("""
+                UPDATE profiles SET sort_order = id WHERE sort_order IS NULL
+            """)
 
             # ── Instance cache table ───────────────────────────────────────
             # Stores the last-known EC2 state per instance so the dashboard
@@ -216,6 +237,67 @@ def init_db():
                     attached_policies TEXT[]     NOT NULL DEFAULT '{}',
                     cached_at       TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
                     PRIMARY KEY (group_name, profile_name)
+                )
+            """)
+
+            # ── SES account stats cache table ─────────────────────────────
+            # Stores sandbox/production status + aggregate bounce/complaint/reject
+            # counts (from GetSendStatistics) per profile/region.
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS ses_account_stats_cache (
+                    profile_name            VARCHAR(255) NOT NULL,
+                    profile_color           VARCHAR(20)  NOT NULL DEFAULT '#6366f1',
+                    profile_env             VARCHAR(50)  NOT NULL DEFAULT 'other',
+                    region                  VARCHAR(100) NOT NULL,
+                    sending_enabled         BOOLEAN      NOT NULL DEFAULT TRUE,
+                    in_sandbox              BOOLEAN      NOT NULL DEFAULT TRUE,
+                    max_24_hour_send        DOUBLE PRECISION NOT NULL DEFAULT 0,
+                    total_delivery_attempts BIGINT       NOT NULL DEFAULT 0,
+                    total_bounces           BIGINT       NOT NULL DEFAULT 0,
+                    total_complaints        BIGINT       NOT NULL DEFAULT 0,
+                    total_rejects           BIGINT       NOT NULL DEFAULT 0,
+                    cached_at               TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+                    PRIMARY KEY (profile_name, region)
+                )
+            """)
+
+            # ── SES sending quota cache table ─────────────────────────────
+            # Stores the send quota per profile/region (Max24HourSend,
+            # MaxSendRate, SentLast24Hours) from ses.get_send_quota().
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS ses_sending_quota_cache (
+                    profile_name       VARCHAR(255) NOT NULL,
+                    profile_color      VARCHAR(20)  NOT NULL DEFAULT '#6366f1',
+                    profile_env        VARCHAR(50)  NOT NULL DEFAULT 'other',
+                    region             VARCHAR(100) NOT NULL,
+                    max_24_hour_send   DOUBLE PRECISION NOT NULL DEFAULT 0,
+                    max_send_rate      DOUBLE PRECISION NOT NULL DEFAULT 0,
+                    sent_last_24_hours DOUBLE PRECISION NOT NULL DEFAULT 0,
+                    cached_at          TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+                    PRIMARY KEY (profile_name, region)
+                )
+            """)
+
+            # ── SES identity cache table ───────────────────────────────────
+            # Stores verified SES identities (domains + email addresses) per
+            # profile/region so the dashboard never blocks on AWS API calls.
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS ses_identity_cache (
+                    identity                VARCHAR(255) NOT NULL,
+                    profile_name            VARCHAR(255) NOT NULL,
+                    profile_color           VARCHAR(20)  NOT NULL DEFAULT '#6366f1',
+                    profile_env             VARCHAR(50)  NOT NULL DEFAULT 'other',
+                    region                  VARCHAR(100) NOT NULL,
+                    identity_type           VARCHAR(20)  NOT NULL DEFAULT 'EmailAddress',
+                    verification_status     VARCHAR(50)  NOT NULL DEFAULT 'NotStarted',
+                    dkim_enabled            BOOLEAN      NOT NULL DEFAULT FALSE,
+                    dkim_verification_status VARCHAR(50) NOT NULL DEFAULT 'NotStarted',
+                    bounce_topic_arn        TEXT,
+                    complaint_topic_arn     TEXT,
+                    delivery_topic_arn      TEXT,
+                    forwarding_enabled      BOOLEAN      NOT NULL DEFAULT TRUE,
+                    cached_at               TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+                    PRIMARY KEY (identity, profile_name, region)
                 )
             """)
         conn.commit()

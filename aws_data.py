@@ -384,3 +384,212 @@ def get_iam_groups(profile: dict) -> list[dict]:
             })
 
     return rows
+
+
+def get_ses_identities(profile: dict) -> list[dict]:
+    """Fetch SES verified identities for a single profile across all its regions."""
+    regions = profile.get("regions") or [profile.get("region", "us-east-1")]
+    rows = []
+
+    for region in regions:
+        try:
+            session = boto3.Session(
+                aws_access_key_id=decrypt(profile["access_key"]),
+                aws_secret_access_key=decrypt(profile["secret_key"]),
+                region_name=region,
+            )
+            ses = session.client("ses")
+
+            # List all identities (domains + email addresses)
+            paginator = ses.get_paginator("list_identities")
+            identity_list = []
+            for page in paginator.paginate():
+                identity_list.extend(page.get("Identities", []))
+
+            if not identity_list:
+                continue
+
+            # Batch fetch verification attributes (max 100 per call)
+            BATCH = 100
+            verification_attrs = {}
+            for i in range(0, len(identity_list), BATCH):
+                batch = identity_list[i:i + BATCH]
+                resp = ses.get_identity_verification_attributes(Identities=batch)
+                verification_attrs.update(resp.get("VerificationAttributes", {}))
+
+            # Batch fetch DKIM attributes
+            dkim_attrs = {}
+            for i in range(0, len(identity_list), BATCH):
+                batch = identity_list[i:i + BATCH]
+                resp = ses.get_identity_dkim_attributes(Identities=batch)
+                dkim_attrs.update(resp.get("DkimAttributes", {}))
+
+            # Batch fetch notification attributes
+            notif_attrs = {}
+            for i in range(0, len(identity_list), BATCH):
+                batch = identity_list[i:i + BATCH]
+                resp = ses.get_identity_notification_attributes(Identities=batch)
+                notif_attrs.update(resp.get("NotificationAttributes", {}))
+
+            for identity in identity_list:
+                identity_type = "Domain" if "." in identity and "@" not in identity else "EmailAddress"
+                ver = verification_attrs.get(identity, {})
+                dkim = dkim_attrs.get(identity, {})
+                notif = notif_attrs.get(identity, {})
+
+                rows.append({
+                    "identity":                identity,
+                    "identity_type":           identity_type,
+                    "profile_name":            profile["name"],
+                    "profile_color":           profile["color"],
+                    "profile_env":             profile.get("env_tag", "other"),
+                    "region":                  region,
+                    "verification_status":     ver.get("VerificationStatus", "NotStarted"),
+                    "dkim_enabled":            dkim.get("DkimEnabled", False),
+                    "dkim_verification_status": dkim.get("DkimVerificationStatus", "NotStarted"),
+                    "bounce_topic_arn":        notif.get("BounceTopic") or None,
+                    "complaint_topic_arn":     notif.get("ComplaintTopic") or None,
+                    "delivery_topic_arn":      notif.get("DeliveryTopic") or None,
+                    "forwarding_enabled":      notif.get("ForwardingEnabled", True),
+                })
+        except Exception as e:
+            rows.append({
+                "identity":                f"Error ({region}): {str(e)}",
+                "identity_type":           "EmailAddress",
+                "profile_name":            profile["name"],
+                "profile_color":           profile["color"],
+                "profile_env":             profile.get("env_tag", "other"),
+                "region":                  region,
+                "verification_status":     "Failed",
+                "dkim_enabled":            False,
+                "dkim_verification_status": "NotStarted",
+                "bounce_topic_arn":        None,
+                "complaint_topic_arn":     None,
+                "delivery_topic_arn":      None,
+                "forwarding_enabled":      False,
+            })
+
+    return rows
+
+
+def get_ses_account_stats(profile: dict) -> list[dict]:
+    """
+    Fetch per-region SES account-level stats for a single profile:
+      - sandbox vs production (sending enabled + max24h heuristic)
+      - aggregate bounce / complaint / reject counts from GetSendStatistics
+        (covers the last 2 weeks of 15-minute data points)
+    """
+    regions = profile.get("regions") or [profile.get("region", "us-east-1")]
+    rows = []
+
+    for region in regions:
+        try:
+            session = boto3.Session(
+                aws_access_key_id=decrypt(profile["access_key"]),
+                aws_secret_access_key=decrypt(profile["secret_key"]),
+                region_name=region,
+            )
+            ses = session.client("ses")
+
+            # Sending enabled flag
+            try:
+                sending_resp = ses.get_account_sending_enabled()
+                sending_enabled = sending_resp.get("Enabled", True)
+            except Exception:
+                sending_enabled = True
+
+            # Sandbox detection: SES sandbox accounts have a hard cap of 200 emails/day.
+            # Production accounts always have > 200. We also cross-check with the quota.
+            try:
+                quota_resp = ses.get_send_quota()
+                max_24h = quota_resp.get("Max24HourSend", 0.0)
+            except Exception:
+                max_24h = 0.0
+
+            # Accounts in sandbox are capped at exactly 200/day by AWS.
+            # Any value > 200 means production access has been granted.
+            in_sandbox = (max_24h <= 200.0) if max_24h > 0 else True
+
+            # Aggregate send statistics (last ~14 days of 15-min buckets)
+            total_delivery_attempts = 0
+            total_bounces = 0
+            total_complaints = 0
+            total_rejects = 0
+
+            try:
+                stats_resp = ses.get_send_statistics()
+                for dp in stats_resp.get("SendDataPoints", []):
+                    total_delivery_attempts += dp.get("DeliveryAttempts", 0)
+                    total_bounces           += dp.get("Bounces", 0)
+                    total_complaints        += dp.get("Complaints", 0)
+                    total_rejects           += dp.get("Rejects", 0)
+            except Exception:
+                pass
+
+            rows.append({
+                "profile_name":            profile["name"],
+                "profile_color":           profile["color"],
+                "profile_env":             profile.get("env_tag", "other"),
+                "region":                  region,
+                "sending_enabled":         sending_enabled,
+                "in_sandbox":              in_sandbox,
+                "max_24_hour_send":        max_24h,
+                "total_delivery_attempts": total_delivery_attempts,
+                "total_bounces":           total_bounces,
+                "total_complaints":        total_complaints,
+                "total_rejects":           total_rejects,
+            })
+        except Exception as e:
+            rows.append({
+                "profile_name":            profile["name"],
+                "profile_color":           profile["color"],
+                "profile_env":             profile.get("env_tag", "other"),
+                "region":                  region,
+                "sending_enabled":         False,
+                "in_sandbox":              True,
+                "max_24_hour_send":        0.0,
+                "total_delivery_attempts": 0,
+                "total_bounces":           0,
+                "total_complaints":        0,
+                "total_rejects":           0,
+            })
+
+    return rows
+
+
+def get_ses_sending_quota(profile: dict) -> list[dict]:
+    """Fetch SES sending quota for a single profile across all its regions."""
+    regions = profile.get("regions") or [profile.get("region", "us-east-1")]
+    rows = []
+
+    for region in regions:
+        try:
+            session = boto3.Session(
+                aws_access_key_id=decrypt(profile["access_key"]),
+                aws_secret_access_key=decrypt(profile["secret_key"]),
+                region_name=region,
+            )
+            ses = session.client("ses")
+            quota = ses.get_send_quota()
+
+            rows.append({
+                "profile_name":        profile["name"],
+                "profile_color":       profile["color"],
+                "profile_env":         profile.get("env_tag", "other"),
+                "region":              region,
+                "max_24_hour_send":    quota.get("Max24HourSend", 0.0),
+                "max_send_rate":       quota.get("MaxSendRate", 0.0),
+                "sent_last_24_hours":  quota.get("SentLast24Hours", 0.0),
+            })
+        except Exception as e:
+            rows.append({
+                "profile_name":        profile["name"],
+                "profile_color":       profile["color"],
+                "profile_env":         profile.get("env_tag", "other"),
+                "region":              region,
+                "max_24_hour_send":    0.0,
+                "max_send_rate":       0.0,
+                "sent_last_24_hours":  0.0,
+            })
+
+    return rows

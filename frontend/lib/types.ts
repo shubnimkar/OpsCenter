@@ -21,6 +21,19 @@ export interface Profile {
   regions: string[];
   color: string;
   env_tag: EnvTag;
+  /** Resolved AWS Account ID — populated after a successful connection test */
+  account_id?: string | null;
+  /** ISO timestamp of the last connection test (stored in DB) */
+  last_tested_at?: string | null;
+  /** Whether the last connection test succeeded (stored in DB) */
+  last_test_ok?: boolean | null;
+}
+
+export interface ProfileSummary {
+  ec2_count: number;
+  s3_count: number;
+  lambda_count: number;
+  iam_user_count: number;
 }
 
 export interface ProfileCreate {
@@ -123,5 +136,48 @@ export interface IAMGroup {
   CreatedAt: string | null;
   MemberCount: number;
   AttachedPolicies: string[];
+  CachedAt?: string;
+}
+
+export interface SESIdentity {
+  Identity: string;
+  IdentityType: "EmailAddress" | "Domain";
+  Profile: string;
+  ProfileColor: string;
+  ProfileEnvTag: EnvTag;
+  Region: string;
+  VerificationStatus: string;
+  DkimEnabled: boolean;
+  DkimVerificationStatus: string;
+  BounceTopicArn: string | null;
+  ComplaintTopicArn: string | null;
+  DeliveryTopicArn: string | null;
+  ForwardingEnabled: boolean;
+  CachedAt?: string;
+}
+
+export interface SESSendingQuota {
+  Profile: string;
+  ProfileColor: string;
+  ProfileEnvTag: EnvTag;
+  Region: string;
+  Max24HourSend: number;
+  MaxSendRate: number;
+  SentLast24Hours: number;
+  CachedAt?: string;
+}
+
+export interface SESAccountStats {
+  Profile: string;
+  ProfileColor: string;
+  ProfileEnvTag: EnvTag;
+  Region: string;
+  SendingEnabled: boolean;
+  InSandbox: boolean;
+  Max24HourSend: number;
+  TotalDeliveryAttempts: number;
+  TotalBounces: number;
+  TotalComplaints: number;
+  TotalRejects: number;
   CachedAt?: string;
 }

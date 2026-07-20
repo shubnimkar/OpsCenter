@@ -2,6 +2,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, field_validator
 from typing import Optional, List
+from datetime import datetime
 import psycopg2
 import boto3
 from botocore.exceptions import ClientError, NoCredentialsError
@@ -129,6 +130,9 @@ class ProfileResponse(BaseModel):
     regions: List[str]
     color: str
     env_tag: str
+    account_id: Optional[str] = None
+    last_tested_at: Optional[datetime] = None
+    last_test_ok: Optional[bool] = None
 
 
 class ConnectionTestRequest(BaseModel):
@@ -321,8 +325,8 @@ def test_connection(payload: ConnectionTestRequest):
 def test_saved_profile_connection(profile_id: int):
     """
     Test the stored credentials for an existing profile.
-    Decrypts keys from the DB and calls STS GetCallerIdentity.
-    Uses the first region in the profile's regions list.
+    Decrypts keys from the DB, calls STS GetCallerIdentity, and persists
+    the result (last_tested_at, last_test_ok, account_id) back to the profile row.
     """
     with get_connection() as conn:
         with conn.cursor() as cur:
@@ -337,6 +341,11 @@ def test_saved_profile_connection(profile_id: int):
 
     region = (row["regions"] or ["us-east-1"])[0]
 
+    ok = False
+    account_id_val = None
+    arn_val = None
+    message = "Unknown error"
+
     try:
         session = boto3.Session(
             aws_access_key_id=decrypt(row["access_key"]),
@@ -345,20 +354,38 @@ def test_saved_profile_connection(profile_id: int):
         )
         sts = session.client("sts")
         identity = sts.get_caller_identity()
-        return ConnectionTestResponse(
-            ok=True,
-            account_id=identity.get("Account"),
-            arn=identity.get("Arn"),
-            message="Connection successful",
-        )
+        ok = True
+        account_id_val = identity.get("Account")
+        arn_val = identity.get("Arn")
+        message = "Connection successful"
     except ClientError as e:
-        code = e.response["Error"]["Code"]
-        msg = e.response["Error"]["Message"]
-        return ConnectionTestResponse(ok=False, message=f"{code}: {msg}")
+        message = f"{e.response['Error']['Code']}: {e.response['Error']['Message']}"
     except NoCredentialsError:
-        return ConnectionTestResponse(ok=False, message="Invalid or missing credentials")
+        message = "Invalid or missing credentials"
     except Exception as e:
-        return ConnectionTestResponse(ok=False, message=str(e))
+        message = str(e)
+
+    # Persist result — always write, whether success or failure
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                UPDATE profiles
+                SET last_tested_at = NOW(),
+                    last_test_ok   = %s,
+                    account_id     = CASE WHEN %s THEN %s ELSE account_id END
+                WHERE id = %s
+                """,
+                (ok, ok, account_id_val, profile_id),
+            )
+        conn.commit()
+
+    return ConnectionTestResponse(
+        ok=ok,
+        account_id=account_id_val,
+        arn=arn_val,
+        message=message,
+    )
 
 
 # ── Profiles ──────────────────────────────────────────────────────────────────
@@ -367,8 +394,30 @@ def test_saved_profile_connection(profile_id: int):
 def list_profiles():
     with get_connection() as conn:
         with conn.cursor() as cur:
-            cur.execute("SELECT id, name, regions, color, env_tag FROM profiles ORDER BY name")
+            cur.execute(
+                "SELECT id, name, regions, color, env_tag, account_id, last_tested_at, last_test_ok FROM profiles ORDER BY sort_order NULLS LAST, id"
+            )
             return cur.fetchall()
+
+
+class ProfileReorderRequest(BaseModel):
+    ordered_ids: List[int]
+
+
+@app.patch("/api/profiles/reorder", status_code=204)
+def reorder_profiles(payload: ProfileReorderRequest):
+    """
+    Accepts a list of profile IDs in the desired display order and
+    writes sort_order = position index to each row.
+    """
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            for idx, profile_id in enumerate(payload.ordered_ids):
+                cur.execute(
+                    "UPDATE profiles SET sort_order = %s WHERE id = %s",
+                    (idx, profile_id),
+                )
+        conn.commit()
 
 
 @app.post("/api/profiles", response_model=ProfileResponse, status_code=201)
@@ -380,7 +429,7 @@ def create_profile(payload: ProfileCreate):
                     """
                     INSERT INTO profiles (name, access_key, secret_key, regions, color, env_tag)
                     VALUES (%s, %s, %s, %s, %s, %s)
-                    RETURNING id, name, regions, color, env_tag
+                    RETURNING id, name, regions, color, env_tag, account_id, last_tested_at, last_test_ok
                     """,
                     (payload.name, encrypt(payload.access_key), encrypt(payload.secret_key), payload.regions, payload.color, payload.env_tag),
                 )
@@ -410,7 +459,7 @@ def patch_profile(profile_id: int, payload: ProfileUpdate):
         with get_connection() as conn:
             with conn.cursor() as cur:
                 cur.execute(
-                    f"UPDATE profiles SET {set_clause} WHERE id = %s RETURNING id, name, regions, color, env_tag",
+                    f"UPDATE profiles SET {set_clause} WHERE id = %s RETURNING id, name, regions, color, env_tag, account_id, last_tested_at, last_test_ok",
                     values,
                 )
                 row = cur.fetchone()
@@ -432,6 +481,60 @@ def delete_profile(profile_id: int):
 
     if not deleted:
         raise HTTPException(status_code=404, detail="Profile not found")
+
+
+class ProfileSummary(BaseModel):
+    ec2_count: int
+    s3_count: int
+    lambda_count: int
+    iam_user_count: int
+
+
+@app.get("/api/profiles/{profile_id}/summary", response_model=ProfileSummary)
+def profile_summary(profile_id: int):
+    """
+    Returns cached resource counts for a single profile.
+    Reads from the existing cache tables — no AWS calls made.
+    """
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            # Resolve profile name
+            cur.execute("SELECT name FROM profiles WHERE id = %s", (profile_id,))
+            row = cur.fetchone()
+            if not row:
+                raise HTTPException(status_code=404, detail="Profile not found")
+            profile_name = row["name"]
+
+            cur.execute(
+                "SELECT COUNT(*) AS cnt FROM instance_cache WHERE profile_name = %s",
+                (profile_name,),
+            )
+            ec2_count = cur.fetchone()["cnt"]
+
+            cur.execute(
+                "SELECT COUNT(*) AS cnt FROM s3_bucket_cache WHERE profile_name = %s",
+                (profile_name,),
+            )
+            s3_count = cur.fetchone()["cnt"]
+
+            cur.execute(
+                "SELECT COUNT(*) AS cnt FROM lambda_cache WHERE profile_name = %s",
+                (profile_name,),
+            )
+            lambda_count = cur.fetchone()["cnt"]
+
+            cur.execute(
+                "SELECT COUNT(*) AS cnt FROM iam_user_cache WHERE profile_name = %s",
+                (profile_name,),
+            )
+            iam_user_count = cur.fetchone()["cnt"]
+
+    return ProfileSummary(
+        ec2_count=ec2_count,
+        s3_count=s3_count,
+        lambda_count=lambda_count,
+        iam_user_count=iam_user_count,
+    )
 
 
 # ── IAM ───────────────────────────────────────────────────────────────────────
@@ -515,5 +618,80 @@ def iam_groups():
                     cached_at         AS "CachedAt"
                 FROM iam_group_cache
                 ORDER BY profile_name, group_name
+            """)
+            return cur.fetchall()
+
+
+# ── SES ───────────────────────────────────────────────────────────────────────
+
+@app.get("/api/ses-identities")
+def ses_identities():
+    """Returns cached SES identity data from Postgres."""
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT
+                    identity                 AS "Identity",
+                    identity_type            AS "IdentityType",
+                    profile_name             AS "Profile",
+                    profile_color            AS "ProfileColor",
+                    profile_env              AS "ProfileEnvTag",
+                    region                   AS "Region",
+                    verification_status      AS "VerificationStatus",
+                    dkim_enabled             AS "DkimEnabled",
+                    dkim_verification_status AS "DkimVerificationStatus",
+                    bounce_topic_arn         AS "BounceTopicArn",
+                    complaint_topic_arn      AS "ComplaintTopicArn",
+                    delivery_topic_arn       AS "DeliveryTopicArn",
+                    forwarding_enabled       AS "ForwardingEnabled",
+                    cached_at                AS "CachedAt"
+                FROM ses_identity_cache
+                ORDER BY profile_name, region, identity
+            """)
+            return cur.fetchall()
+
+
+@app.get("/api/ses-account-stats")
+def ses_account_stats():
+    """Returns cached SES account stats (sandbox status, bounce/complaint/reject counts) from Postgres."""
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT
+                    profile_name            AS "Profile",
+                    profile_color           AS "ProfileColor",
+                    profile_env             AS "ProfileEnvTag",
+                    region                  AS "Region",
+                    sending_enabled         AS "SendingEnabled",
+                    in_sandbox              AS "InSandbox",
+                    max_24_hour_send        AS "Max24HourSend",
+                    total_delivery_attempts AS "TotalDeliveryAttempts",
+                    total_bounces           AS "TotalBounces",
+                    total_complaints        AS "TotalComplaints",
+                    total_rejects           AS "TotalRejects",
+                    cached_at               AS "CachedAt"
+                FROM ses_account_stats_cache
+                ORDER BY profile_name, region
+            """)
+            return cur.fetchall()
+
+
+@app.get("/api/ses-sending-quotas")
+def ses_sending_quotas():
+    """Returns cached SES sending quota data from Postgres."""
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT
+                    profile_name       AS "Profile",
+                    profile_color      AS "ProfileColor",
+                    profile_env        AS "ProfileEnvTag",
+                    region             AS "Region",
+                    max_24_hour_send   AS "Max24HourSend",
+                    max_send_rate      AS "MaxSendRate",
+                    sent_last_24_hours AS "SentLast24Hours",
+                    cached_at          AS "CachedAt"
+                FROM ses_sending_quota_cache
+                ORDER BY profile_name, region
             """)
             return cur.fetchall()

@@ -40,6 +40,7 @@ JOB_ID = "ec2_poll"
 S3_JOB_ID = "s3_poll"
 LAMBDA_JOB_ID = "lambda_poll"
 IAM_JOB_ID = "iam_poll"
+SES_JOB_ID = "ses_poll"
 
 # ── Shared helpers ────────────────────────────────────────────────────────────
 
@@ -700,6 +701,183 @@ def poll_iam() -> None:
         logger.error("Failed to write IAM cache to DB: %s", exc)
 
 
+# ── SES poll ─────────────────────────────────────────────────────────────────
+
+
+def _upsert_ses_account_stats(conn, rows: list[dict]) -> None:
+    if not rows:
+        return
+    with conn.cursor() as cur:
+        for row in rows:
+            cur.execute(
+                """
+                INSERT INTO ses_account_stats_cache
+                    (profile_name, profile_color, profile_env, region,
+                     sending_enabled, in_sandbox, max_24_hour_send,
+                     total_delivery_attempts, total_bounces,
+                     total_complaints, total_rejects, cached_at)
+                VALUES
+                    (%(profile_name)s, %(profile_color)s, %(profile_env)s, %(region)s,
+                     %(sending_enabled)s, %(in_sandbox)s, %(max_24_hour_send)s,
+                     %(total_delivery_attempts)s, %(total_bounces)s,
+                     %(total_complaints)s, %(total_rejects)s, NOW())
+                ON CONFLICT (profile_name, region)
+                DO UPDATE SET
+                    profile_color            = EXCLUDED.profile_color,
+                    profile_env              = EXCLUDED.profile_env,
+                    sending_enabled          = EXCLUDED.sending_enabled,
+                    in_sandbox               = EXCLUDED.in_sandbox,
+                    max_24_hour_send         = EXCLUDED.max_24_hour_send,
+                    total_delivery_attempts  = EXCLUDED.total_delivery_attempts,
+                    total_bounces            = EXCLUDED.total_bounces,
+                    total_complaints         = EXCLUDED.total_complaints,
+                    total_rejects            = EXCLUDED.total_rejects,
+                    cached_at                = NOW()
+                """,
+                row,
+            )
+
+
+def _upsert_ses_sending_quotas(conn, rows: list[dict]) -> None:
+    if not rows:
+        return
+    with conn.cursor() as cur:
+        for row in rows:
+            cur.execute(
+                """
+                INSERT INTO ses_sending_quota_cache
+                    (profile_name, profile_color, profile_env, region,
+                     max_24_hour_send, max_send_rate, sent_last_24_hours, cached_at)
+                VALUES
+                    (%(profile_name)s, %(profile_color)s, %(profile_env)s, %(region)s,
+                     %(max_24_hour_send)s, %(max_send_rate)s, %(sent_last_24_hours)s, NOW())
+                ON CONFLICT (profile_name, region)
+                DO UPDATE SET
+                    profile_color      = EXCLUDED.profile_color,
+                    profile_env        = EXCLUDED.profile_env,
+                    max_24_hour_send   = EXCLUDED.max_24_hour_send,
+                    max_send_rate      = EXCLUDED.max_send_rate,
+                    sent_last_24_hours = EXCLUDED.sent_last_24_hours,
+                    cached_at          = NOW()
+                """,
+                row,
+            )
+
+
+def _upsert_ses_identities(conn, rows: list[dict]) -> None:
+    if not rows:
+        return
+    with conn.cursor() as cur:
+        for row in rows:
+            cur.execute(
+                """
+                INSERT INTO ses_identity_cache
+                    (identity, profile_name, profile_color, profile_env, region,
+                     identity_type, verification_status,
+                     dkim_enabled, dkim_verification_status,
+                     bounce_topic_arn, complaint_topic_arn, delivery_topic_arn,
+                     forwarding_enabled, cached_at)
+                VALUES
+                    (%(identity)s, %(profile_name)s, %(profile_color)s, %(profile_env)s, %(region)s,
+                     %(identity_type)s, %(verification_status)s,
+                     %(dkim_enabled)s, %(dkim_verification_status)s,
+                     %(bounce_topic_arn)s, %(complaint_topic_arn)s, %(delivery_topic_arn)s,
+                     %(forwarding_enabled)s, NOW())
+                ON CONFLICT (identity, profile_name, region)
+                DO UPDATE SET
+                    profile_color            = EXCLUDED.profile_color,
+                    profile_env              = EXCLUDED.profile_env,
+                    identity_type            = EXCLUDED.identity_type,
+                    verification_status      = EXCLUDED.verification_status,
+                    dkim_enabled             = EXCLUDED.dkim_enabled,
+                    dkim_verification_status = EXCLUDED.dkim_verification_status,
+                    bounce_topic_arn         = EXCLUDED.bounce_topic_arn,
+                    complaint_topic_arn      = EXCLUDED.complaint_topic_arn,
+                    delivery_topic_arn       = EXCLUDED.delivery_topic_arn,
+                    forwarding_enabled       = EXCLUDED.forwarding_enabled,
+                    cached_at                = NOW()
+                """,
+                row,
+            )
+
+
+def poll_ses() -> None:
+    """
+    Fetch SES identity data, sending quotas, and account stats (sandbox status,
+    bounce/complaint/reject counts) for every profile and refresh the cache.
+    Called by APScheduler on every interval tick and by the manual trigger endpoint.
+    """
+    from aws_data import get_ses_identities, get_ses_sending_quota, get_ses_account_stats
+    from botocore.exceptions import ClientError, NoCredentialsError
+
+    logger.info("SES poll started")
+    profiles = []
+
+    try:
+        with get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT name, access_key, secret_key, regions, region, color, env_tag FROM profiles ORDER BY name"
+                )
+                profiles = cur.fetchall()
+    except Exception as exc:
+        logger.error("Failed to load profiles from DB for SES poll: %s", exc)
+        return
+
+    if not profiles:
+        logger.info("No profiles configured — nothing to poll for SES")
+        return
+
+    all_rows: list[dict] = []
+    all_quota_rows: list[dict] = []
+    all_account_stats: list[dict] = []
+    profile_errors: list[str] = []
+
+    for profile in profiles:
+        try:
+            rows = get_ses_identities(profile)
+            all_rows.extend(rows)
+            logger.debug("SES profile %s → %d identity(ies)", profile["name"], len(rows))
+        except (ClientError, NoCredentialsError) as exc:
+            msg = str(exc)
+            logger.warning("AWS SES error for profile %s: %s", profile["name"], msg)
+            profile_errors.append(f"{profile['name']}: {msg}")
+        except Exception as exc:
+            msg = str(exc)
+            logger.warning("Unexpected SES error for profile %s: %s", profile["name"], msg)
+            profile_errors.append(f"{profile['name']}: {msg}")
+
+        try:
+            quota_rows = get_ses_sending_quota(profile)
+            all_quota_rows.extend(quota_rows)
+            logger.debug("SES quota profile %s → %d region(s)", profile["name"], len(quota_rows))
+        except Exception as exc:
+            logger.warning("SES quota error for profile %s: %s", profile["name"], exc)
+
+        try:
+            account_stats = get_ses_account_stats(profile)
+            all_account_stats.extend(account_stats)
+            logger.debug("SES account stats profile %s → %d region(s)", profile["name"], len(account_stats))
+        except Exception as exc:
+            logger.warning("SES account stats error for profile %s: %s", profile["name"], exc)
+
+    try:
+        with get_connection() as conn:
+            _upsert_ses_identities(conn, all_rows)
+            _upsert_ses_sending_quotas(conn, all_quota_rows)
+            _upsert_ses_account_stats(conn, all_account_stats)
+            conn.commit()
+        logger.info(
+            "SES poll complete: %d identity(ies), %d quota row(s), %d account stat row(s) cached, %d profile error(s)",
+            len(all_rows),
+            len(all_quota_rows),
+            len(all_account_stats),
+            len(profile_errors),
+        )
+    except Exception as exc:
+        logger.error("Failed to write SES cache to DB: %s", exc)
+
+
 # ── Scheduler lifecycle ───────────────────────────────────────────────────────
 def _build_jobstore():
     try:
@@ -764,6 +942,15 @@ def start_scheduler() -> None:
         next_run_time=datetime.now(timezone.utc),
     )
 
+    _scheduler.add_job(
+        poll_ses,
+        trigger="interval",
+        seconds=interval,
+        id=SES_JOB_ID,
+        replace_existing=True,
+        next_run_time=datetime.now(timezone.utc),
+    )
+
     _scheduler.start()
     logger.info(
         "Scheduler started — polling every %d seconds (%d minutes)",
@@ -794,6 +981,7 @@ def reschedule_job(new_interval_seconds: int) -> dict:
     _scheduler.reschedule_job(S3_JOB_ID, trigger="interval", seconds=new_interval_seconds)
     _scheduler.reschedule_job(LAMBDA_JOB_ID, trigger="interval", seconds=new_interval_seconds)
     _scheduler.reschedule_job(IAM_JOB_ID, trigger="interval", seconds=new_interval_seconds)
+    _scheduler.reschedule_job(SES_JOB_ID, trigger="interval", seconds=new_interval_seconds)
     _persist_interval(new_interval_seconds)
 
     logger.info(
@@ -846,15 +1034,17 @@ def get_scheduler_status() -> dict:
 
 def trigger_poll() -> dict:
     """
-    Immediately run EC2, S3, Lambda, and IAM poll jobs outside the scheduler interval.
+    Immediately run EC2, S3, Lambda, IAM, and SES poll jobs outside the scheduler interval.
     Used by POST /api/scheduler/trigger (the dashboard Refresh button).
     """
     ec2_thread    = threading.Thread(target=poll_ec2,    daemon=True, name="ec2-manual-poll")
     s3_thread     = threading.Thread(target=poll_s3,     daemon=True, name="s3-manual-poll")
     lambda_thread = threading.Thread(target=poll_lambda, daemon=True, name="lambda-manual-poll")
     iam_thread    = threading.Thread(target=poll_iam,    daemon=True, name="iam-manual-poll")
+    ses_thread    = threading.Thread(target=poll_ses,    daemon=True, name="ses-manual-poll")
     ec2_thread.start()
     s3_thread.start()
     lambda_thread.start()
     iam_thread.start()
-    return {"triggered": True, "message": "EC2, S3, Lambda and IAM poll started in background"}
+    ses_thread.start()
+    return {"triggered": True, "message": "EC2, S3, Lambda, IAM and SES poll started in background"}
