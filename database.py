@@ -386,4 +386,61 @@ def init_db():
                 ALTER TABLE ssl_certificates
                 ADD COLUMN IF NOT EXISTS key_algorithm VARCHAR(50) NOT NULL DEFAULT ''
             """)
+
+            # ── Website Uptime Monitor ─────────────────────────────────────
+            # Stores each monitored website with its monitoring configuration.
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS website_monitor (
+                    id                  SERIAL       PRIMARY KEY,
+                    name                VARCHAR(255) NOT NULL,
+                    url                 TEXT         NOT NULL UNIQUE,
+                    environment         VARCHAR(50)  NOT NULL DEFAULT 'production',
+                    monitoring_interval INT          NOT NULL DEFAULT 300,
+                    timeout_seconds     INT          NOT NULL DEFAULT 30,
+                    expected_status     INT          NOT NULL DEFAULT 200,
+                    keyword             TEXT         NOT NULL DEFAULT '',
+                    maintenance_mode    BOOLEAN      NOT NULL DEFAULT FALSE,
+                    notes               TEXT         NOT NULL DEFAULT '',
+                    -- Latest check snapshot (denormalised for fast dashboard reads)
+                    last_status         VARCHAR(40)  NOT NULL DEFAULT 'unknown',
+                    last_http_status    INT,
+                    last_response_time  INT,
+                    last_checked_at     TIMESTAMPTZ,
+                    next_check_at       TIMESTAMPTZ,
+                    created_at          TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+                    updated_at          TIMESTAMPTZ  NOT NULL DEFAULT NOW()
+                )
+            """)
+            # Migrations for website_monitor added later
+            cur.execute("""
+                ALTER TABLE website_monitor
+                ADD COLUMN IF NOT EXISTS keyword TEXT NOT NULL DEFAULT ''
+            """)
+            cur.execute("""
+                ALTER TABLE website_monitor
+                ADD COLUMN IF NOT EXISTS maintenance_mode BOOLEAN NOT NULL DEFAULT FALSE
+            """)
+            cur.execute("""
+                ALTER TABLE website_monitor
+                ADD COLUMN IF NOT EXISTS notes TEXT NOT NULL DEFAULT ''
+            """)
+
+            # ── Website monitor history ────────────────────────────────────
+            # Append-only log of every health-check result per website.
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS website_monitor_history (
+                    id               SERIAL       PRIMARY KEY,
+                    website_id       INT          NOT NULL REFERENCES website_monitor(id) ON DELETE CASCADE,
+                    status           VARCHAR(40)  NOT NULL,
+                    http_status      INT,
+                    response_time_ms INT,
+                    error_message    TEXT,
+                    checked_at       TIMESTAMPTZ  NOT NULL DEFAULT NOW()
+                )
+            """)
+            cur.execute("""
+                CREATE INDEX IF NOT EXISTS idx_wmh_website_checked
+                    ON website_monitor_history (website_id, checked_at DESC)
+            """)
+
         conn.commit()

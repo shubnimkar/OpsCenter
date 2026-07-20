@@ -306,3 +306,79 @@ export async function refreshSSLCertificate(id: number): Promise<{ triggered: bo
   }
   return res.json();
 }
+
+
+// ── Website Uptime Monitor ──────────────────────────────────────────────────
+
+import {
+  WebsiteMonitor,
+  WebsiteCreate,
+  WebsiteUpdate,
+  WebsiteHistoryRecord,
+  WebsiteStats,
+} from "./types";
+
+export async function fetchWebsites(): Promise<WebsiteMonitor[]> {
+  const res = await fetch(`${API_BASE}/api/uptime/websites`, { next: { revalidate: 0 } });
+  if (!res.ok) throw new Error(`Failed to fetch websites: ${res.status} ${res.statusText}`);
+  return res.json();
+}
+
+export async function createWebsite(data: WebsiteCreate): Promise<WebsiteMonitor> {
+  const res = await fetch(`${API_BASE}/api/uptime/websites`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(data),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail ?? `Failed to create website: ${res.status}`);
+  }
+  return res.json();
+}
+
+export async function updateWebsite(id: number, data: WebsiteUpdate): Promise<WebsiteMonitor> {
+  const res = await fetch(`${API_BASE}/api/uptime/websites/${id}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(data),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail ?? `Failed to update website: ${res.status}`);
+  }
+  return res.json();
+}
+
+export async function deleteWebsite(id: number): Promise<void> {
+  const res = await fetch(`${API_BASE}/api/uptime/websites/${id}`, { method: "DELETE" });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail ?? `Failed to delete website: ${res.status}`);
+  }
+}
+
+export async function refreshWebsite(id: number): Promise<{ triggered: boolean; message: string }> {
+  const res = await fetch(`${API_BASE}/api/uptime/websites/${id}/refresh`, { method: "POST" });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail ?? `Failed to refresh website: ${res.status}`);
+  }
+  return res.json();
+}
+
+export async function fetchWebsiteHistory(id: number, limit = 200): Promise<WebsiteHistoryRecord[]> {
+  const res = await fetch(`${API_BASE}/api/uptime/websites/${id}/history?limit=${limit}`, {
+    next: { revalidate: 0 },
+  });
+  if (!res.ok) throw new Error(`Failed to fetch history: ${res.status} ${res.statusText}`);
+  return res.json();
+}
+
+export async function fetchWebsiteStats(id: number): Promise<WebsiteStats> {
+  const res = await fetch(`${API_BASE}/api/uptime/websites/${id}/stats`, {
+    next: { revalidate: 0 },
+  });
+  if (!res.ok) throw new Error(`Failed to fetch stats: ${res.status} ${res.statusText}`);
+  return res.json();
+}

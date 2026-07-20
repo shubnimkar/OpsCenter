@@ -1113,6 +1113,10 @@ def start_scheduler() -> None:
         next_run_time=datetime.now(timezone.utc),
     )
 
+    # Website Uptime Monitor — single tick job (runs every 60 s, checks per-site intervals)
+    from uptime_scheduler import register_uptime_scheduler
+    register_uptime_scheduler(_scheduler)
+
     _scheduler.start()
     logger.info(
         "Scheduler started — polling every %d seconds (%d minutes)",

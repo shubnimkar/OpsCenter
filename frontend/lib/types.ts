@@ -251,3 +251,83 @@ export interface SSLDomainUpdate {
   owner?: string;
   notes?: string;
 }
+
+
+// ── Website Uptime Monitor ──────────────────────────────────────────────────
+
+export type UptimeStatus =
+  | "online"
+  | "offline"
+  | "degraded"
+  | "maintenance"
+  | "content_validation_failed"
+  | "unknown";
+
+export type UptimeEnvironment = "production" | "test" | "development";
+
+export interface WebsiteMonitor {
+  id: number;
+  name: string;
+  url: string;
+  environment: UptimeEnvironment;
+  monitoring_interval: number;     // seconds
+  timeout_seconds: number;
+  expected_status: number;
+  keyword: string;
+  maintenance_mode: boolean;
+  notes: string;
+  // Latest check snapshot
+  last_status: UptimeStatus;
+  last_http_status: number | null;
+  last_response_time: number | null;
+  last_checked_at: string | null;
+  next_check_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface WebsiteCreate {
+  name: string;
+  url: string;
+  environment?: UptimeEnvironment;
+  monitoring_interval?: number;
+  timeout_seconds?: number;
+  expected_status?: number;
+  keyword?: string;
+  maintenance_mode?: boolean;
+  notes?: string;
+}
+
+export interface WebsiteUpdate {
+  name?: string;
+  url?: string;
+  environment?: UptimeEnvironment;
+  monitoring_interval?: number;
+  timeout_seconds?: number;
+  expected_status?: number;
+  keyword?: string;
+  maintenance_mode?: boolean;
+  notes?: string;
+}
+
+export interface WebsiteHistoryRecord {
+  id: number;
+  website_id: number;
+  status: UptimeStatus;
+  http_status: number | null;
+  response_time_ms: number | null;
+  error_message: string | null;
+  checked_at: string;
+}
+
+export interface WebsiteStats {
+  uptime_24h: number | null;
+  uptime_7d: number | null;
+  uptime_30d: number | null;
+  avg_ms: number | null;
+  min_ms: number | null;
+  max_ms: number | null;
+  chart_24h: { t: string; ms: number }[];
+  chart_7d: { t: string; ms: number }[];
+  chart_30d: { t: string; ms: number }[];
+}

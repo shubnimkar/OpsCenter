@@ -622,16 +622,18 @@ export default function Route53Dashboard() {
                 <X size={12} />Clear filters
               </button>
             )}
-            <span className="ml-auto text-xs text-slate-400 dark:text-slate-500 whitespace-nowrap">
-              {filteredZones.length} of {totalZones} zone{totalZones !== 1 ? "s" : ""}
-            </span>
+            <div className="ml-auto flex items-center gap-3">
+              <span className="text-xs text-slate-400 dark:text-slate-500 whitespace-nowrap">
+                {filteredZones.length} of {totalZones} zone{totalZones !== 1 ? "s" : ""}
+              </span>
+              {totalZones > 0 && (
+                <Pagination total={filteredZones.length} page={zonePage} pageSize={zonePageSize}
+                  onPageChange={setZonePage} onPageSizeChange={(s) => { setZonePageSize(s); setZonePage(1); }} />
+              )}
+            </div>
           </div>
           <ZonesTable zones={filteredZones} loading={loading} onClearFilters={clearZoneFilters}
             hasActiveFilters={hasActiveZoneFilters} page={zonePage} pageSize={zonePageSize} onRowClick={setSelectedZone} />
-          {!loading && filteredZones.length > 0 && (
-            <Pagination total={filteredZones.length} page={zonePage} pageSize={zonePageSize}
-              onPageChange={setZonePage} onPageSizeChange={(s) => { setZonePageSize(s); setZonePage(1); }} />
-          )}
         </>
       )}
 
@@ -655,16 +657,18 @@ export default function Route53Dashboard() {
                 <X size={12} />Clear filters
               </button>
             )}
-            <span className="ml-auto text-xs text-slate-400 dark:text-slate-500 whitespace-nowrap">
-              {filteredRecords.length} of {totalRecords} record{totalRecords !== 1 ? "s" : ""}
-            </span>
+            <div className="ml-auto flex items-center gap-3">
+              <span className="text-xs text-slate-400 dark:text-slate-500 whitespace-nowrap">
+                {filteredRecords.length} of {totalRecords} record{totalRecords !== 1 ? "s" : ""}
+              </span>
+              {totalRecords > 0 && (
+                <Pagination total={filteredRecords.length} page={recordPage} pageSize={recordPageSize}
+                  onPageChange={setRecordPage} onPageSizeChange={(s) => { setRecordPageSize(s); setRecordPage(1); }} />
+              )}
+            </div>
           </div>
           <RecordsTable records={filteredRecords} loading={loading} onClearFilters={clearRecordFilters}
             hasActiveFilters={hasActiveRecordFilters} page={recordPage} pageSize={recordPageSize} onRowClick={setSelectedRecord} />
-          {!loading && filteredRecords.length > 0 && (
-            <Pagination total={filteredRecords.length} page={recordPage} pageSize={recordPageSize}
-              onPageChange={setRecordPage} onPageSizeChange={(s) => { setRecordPageSize(s); setRecordPage(1); }} />
-          )}
         </>
       )}
 

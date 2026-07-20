@@ -67,6 +67,12 @@ export default function TopNavbar() {
           SSL
         </Link>
         <Link
+          href="/uptime"
+          className={pathname === "/uptime" ? activeCls : inactiveCls}
+        >
+          Uptime
+        </Link>
+        <Link
           href="/profiles"
           className={pathname === "/profiles" ? activeCls : inactiveCls}
         >

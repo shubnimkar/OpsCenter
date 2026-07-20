@@ -999,3 +999,445 @@ def refresh_ssl_certificate(domain_id: int, background_tasks: BackgroundTasks):
     background_tasks.add_task(refresh_domain, domain_id)
 
     return {"triggered": True, "message": "SSL certificate refresh started in background"}
+
+
+# ── Website Uptime Monitor ─────────────────────────────────────────────────
+
+UPTIME_ENVIRONMENTS = {"production", "test", "development"}
+UPTIME_INTERVALS    = {60, 300, 600, 900, 1800, 3600}   # seconds
+
+
+class WebsiteCreate(BaseModel):
+    name: str
+    url: str
+    environment: str = "production"
+    monitoring_interval: int = 300
+    timeout_seconds: int = 30
+    expected_status: int = 200
+    keyword: str = ""
+    maintenance_mode: bool = False
+    notes: str = ""
+
+    @field_validator("name")
+    @classmethod
+    def valid_name(cls, v: str) -> str:
+        v = v.strip()
+        if not v:
+            raise ValueError("name must not be empty")
+        return v
+
+    @field_validator("url")
+    @classmethod
+    def valid_url(cls, v: str) -> str:
+        v = v.strip()
+        if not v.startswith(("http://", "https://")):
+            raise ValueError("url must start with http:// or https://")
+        return v
+
+    @field_validator("environment")
+    @classmethod
+    def valid_environment(cls, v: str) -> str:
+        v = v.strip().lower()
+        if v not in UPTIME_ENVIRONMENTS:
+            raise ValueError(f"environment must be one of: {', '.join(sorted(UPTIME_ENVIRONMENTS))}")
+        return v
+
+    @field_validator("monitoring_interval")
+    @classmethod
+    def valid_interval(cls, v: int) -> int:
+        if v not in UPTIME_INTERVALS:
+            raise ValueError(f"monitoring_interval must be one of: {sorted(UPTIME_INTERVALS)}")
+        return v
+
+    @field_validator("timeout_seconds")
+    @classmethod
+    def valid_timeout(cls, v: int) -> int:
+        if not (5 <= v <= 120):
+            raise ValueError("timeout_seconds must be between 5 and 120")
+        return v
+
+    @field_validator("expected_status")
+    @classmethod
+    def valid_status_code(cls, v: int) -> int:
+        if not (100 <= v <= 599):
+            raise ValueError("expected_status must be a valid HTTP status code (100–599)")
+        return v
+
+
+class WebsiteUpdate(BaseModel):
+    name: Optional[str] = None
+    url: Optional[str] = None
+    environment: Optional[str] = None
+    monitoring_interval: Optional[int] = None
+    timeout_seconds: Optional[int] = None
+    expected_status: Optional[int] = None
+    keyword: Optional[str] = None
+    maintenance_mode: Optional[bool] = None
+    notes: Optional[str] = None
+
+    @field_validator("name", mode="before")
+    @classmethod
+    def valid_name(cls, v):
+        if v is not None:
+            v = v.strip()
+            if not v:
+                raise ValueError("name must not be empty")
+        return v
+
+    @field_validator("url", mode="before")
+    @classmethod
+    def valid_url(cls, v):
+        if v is not None:
+            v = v.strip()
+            if not v.startswith(("http://", "https://")):
+                raise ValueError("url must start with http:// or https://")
+        return v
+
+    @field_validator("environment", mode="before")
+    @classmethod
+    def valid_environment(cls, v):
+        if v is not None:
+            v = v.strip().lower()
+            if v not in UPTIME_ENVIRONMENTS:
+                raise ValueError(f"environment must be one of: {', '.join(sorted(UPTIME_ENVIRONMENTS))}")
+        return v
+
+    @field_validator("monitoring_interval", mode="before")
+    @classmethod
+    def valid_interval(cls, v):
+        if v is not None and int(v) not in UPTIME_INTERVALS:
+            raise ValueError(f"monitoring_interval must be one of: {sorted(UPTIME_INTERVALS)}")
+        return v
+
+    @field_validator("timeout_seconds", mode="before")
+    @classmethod
+    def valid_timeout(cls, v):
+        if v is not None and not (5 <= int(v) <= 120):
+            raise ValueError("timeout_seconds must be between 5 and 120")
+        return v
+
+    @field_validator("expected_status", mode="before")
+    @classmethod
+    def valid_status_code(cls, v):
+        if v is not None and not (100 <= int(v) <= 599):
+            raise ValueError("expected_status must be a valid HTTP status code (100–599)")
+        return v
+
+
+def _row_to_website_dict(row: dict) -> dict:
+    """Serialize a psycopg2 RealDictRow for the uptime endpoint response."""
+    r = dict(row)
+    for key in ("last_checked_at", "next_check_at", "created_at", "updated_at"):
+        if r.get(key) and hasattr(r[key], "isoformat"):
+            r[key] = r[key].isoformat()
+    return r
+
+
+def _row_to_history_dict(row: dict) -> dict:
+    r = dict(row)
+    if r.get("checked_at") and hasattr(r["checked_at"], "isoformat"):
+        r["checked_at"] = r["checked_at"].isoformat()
+    return r
+
+
+@app.get("/api/uptime/websites")
+def list_websites():
+    """Return all monitored websites with their latest check snapshot."""
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT
+                    id, name, url, environment,
+                    monitoring_interval, timeout_seconds, expected_status,
+                    keyword, maintenance_mode, notes,
+                    last_status, last_http_status, last_response_time,
+                    last_checked_at, next_check_at,
+                    created_at, updated_at
+                FROM website_monitor
+                ORDER BY name
+            """)
+            rows = cur.fetchall()
+    return [_row_to_website_dict(r) for r in rows]
+
+
+@app.post("/api/uptime/websites", status_code=201)
+def create_website(payload: WebsiteCreate, background_tasks: BackgroundTasks):
+    """Add a new website to uptime monitoring and immediately trigger a check."""
+    from datetime import datetime, timezone
+    try:
+        with get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO website_monitor
+                        (name, url, environment, monitoring_interval, timeout_seconds,
+                         expected_status, keyword, maintenance_mode, notes,
+                         next_check_at)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    RETURNING
+                        id, name, url, environment,
+                        monitoring_interval, timeout_seconds, expected_status,
+                        keyword, maintenance_mode, notes,
+                        last_status, last_http_status, last_response_time,
+                        last_checked_at, next_check_at,
+                        created_at, updated_at
+                    """,
+                    (
+                        payload.name,
+                        payload.url,
+                        payload.environment,
+                        payload.monitoring_interval,
+                        payload.timeout_seconds,
+                        payload.expected_status,
+                        payload.keyword,
+                        payload.maintenance_mode,
+                        payload.notes,
+                        datetime.now(timezone.utc),   # schedule immediately
+                    ),
+                )
+                row = cur.fetchone()
+            conn.commit()
+    except psycopg2.errors.UniqueViolation:
+        raise HTTPException(
+            status_code=409,
+            detail=f"URL '{payload.url}' is already being monitored",
+        )
+
+    # Kick off first check in the background
+    from uptime_scheduler import run_check_for_website
+    background_tasks.add_task(run_check_for_website, row["id"])
+    return _row_to_website_dict(row)
+
+
+@app.patch("/api/uptime/websites/{website_id}")
+def update_website(website_id: int, payload: WebsiteUpdate):
+    """Partial update of website monitoring configuration."""
+    updates = {k: v for k, v in payload.model_dump().items() if v is not None}
+    if not updates:
+        raise HTTPException(status_code=400, detail="No fields provided to update")
+
+    set_clause = ", ".join(f"{col} = %s" for col in updates)
+    set_clause += ", updated_at = NOW()"
+    values = list(updates.values()) + [website_id]
+
+    try:
+        with get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    f"""
+                    UPDATE website_monitor
+                    SET {set_clause}
+                    WHERE id = %s
+                    RETURNING
+                        id, name, url, environment,
+                        monitoring_interval, timeout_seconds, expected_status,
+                        keyword, maintenance_mode, notes,
+                        last_status, last_http_status, last_response_time,
+                        last_checked_at, next_check_at,
+                        created_at, updated_at
+                    """,
+                    values,
+                )
+                row = cur.fetchone()
+            conn.commit()
+    except psycopg2.errors.UniqueViolation:
+        raise HTTPException(status_code=409, detail="URL already exists")
+
+    if not row:
+        raise HTTPException(status_code=404, detail="Website not found")
+    return _row_to_website_dict(row)
+
+
+@app.delete("/api/uptime/websites/{website_id}", status_code=204)
+def delete_website(website_id: int):
+    """Remove a website from uptime monitoring (history is cascade-deleted)."""
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "DELETE FROM website_monitor WHERE id = %s RETURNING id",
+                (website_id,),
+            )
+            deleted = cur.fetchone()
+        conn.commit()
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Website not found")
+
+
+@app.post("/api/uptime/websites/{website_id}/refresh", status_code=202)
+def refresh_website(website_id: int, background_tasks: BackgroundTasks):
+    """Trigger an immediate health check for a single website."""
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT id FROM website_monitor WHERE id = %s", (website_id,))
+            if not cur.fetchone():
+                raise HTTPException(status_code=404, detail="Website not found")
+
+    from uptime_scheduler import run_check_for_website
+    background_tasks.add_task(run_check_for_website, website_id)
+    return {"triggered": True, "message": "Health check started in background"}
+
+
+@app.get("/api/uptime/websites/{website_id}/history")
+def website_history(website_id: int, limit: int = 200):
+    """Return the most recent check records for a website."""
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT id FROM website_monitor WHERE id = %s", (website_id,))
+            if not cur.fetchone():
+                raise HTTPException(status_code=404, detail="Website not found")
+
+            cur.execute(
+                """
+                SELECT id, website_id, status, http_status,
+                       response_time_ms, error_message, checked_at
+                FROM website_monitor_history
+                WHERE website_id = %s
+                ORDER BY checked_at DESC
+                LIMIT %s
+                """,
+                (website_id, min(limit, 1000)),
+            )
+            rows = cur.fetchall()
+    return [_row_to_history_dict(r) for r in rows]
+
+
+@app.get("/api/uptime/websites/{website_id}/stats")
+def website_stats(website_id: int):
+    """
+    Return uptime percentages and response-time stats for 24h / 7d / 30d windows.
+    Also returns chart data for the response time line chart.
+    """
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT id FROM website_monitor WHERE id = %s", (website_id,))
+            if not cur.fetchone():
+                raise HTTPException(status_code=404, detail="Website not found")
+
+            def _uptime(days: int) -> float | None:
+                cur.execute(
+                    """
+                    SELECT
+                        COUNT(*) FILTER (WHERE status IN ('online','maintenance')) AS successful,
+                        COUNT(*) AS total
+                    FROM website_monitor_history
+                    WHERE website_id = %s
+                      AND checked_at >= NOW() - INTERVAL '%s days'
+                      AND status != 'maintenance'
+                    """,
+                    (website_id, days),
+                )
+                row = cur.fetchone()
+                if not row or row["total"] == 0:
+                    return None
+                # recalculate excluding maintenance from total too
+                cur.execute(
+                    """
+                    SELECT
+                        COUNT(*) FILTER (WHERE status = 'online') AS successful,
+                        COUNT(*) FILTER (WHERE status != 'maintenance') AS total
+                    FROM website_monitor_history
+                    WHERE website_id = %s
+                      AND checked_at >= NOW() - INTERVAL '%s days'
+                    """,
+                    (website_id, days),
+                )
+                r2 = cur.fetchone()
+                if not r2 or r2["total"] == 0:
+                    return None
+                return round(r2["successful"] / r2["total"] * 100, 2)
+
+            uptime_24h = _uptime(1)
+            uptime_7d  = _uptime(7)
+            uptime_30d = _uptime(30)
+
+            # Response time stats (last 30 days)
+            cur.execute(
+                """
+                SELECT
+                    AVG(response_time_ms)  AS avg_ms,
+                    MIN(response_time_ms)  AS min_ms,
+                    MAX(response_time_ms)  AS max_ms
+                FROM website_monitor_history
+                WHERE website_id = %s
+                  AND response_time_ms IS NOT NULL
+                  AND checked_at >= NOW() - INTERVAL '30 days'
+                """,
+                (website_id,),
+            )
+            rt = cur.fetchone()
+
+            # Chart data — last 24 h, grouped by 5-minute buckets
+            cur.execute(
+                """
+                SELECT
+                    date_trunc('hour', checked_at)
+                        + INTERVAL '5 min' * (EXTRACT(MINUTE FROM checked_at)::int / 5)
+                        AS bucket,
+                    ROUND(AVG(response_time_ms)) AS avg_ms
+                FROM website_monitor_history
+                WHERE website_id = %s
+                  AND response_time_ms IS NOT NULL
+                  AND checked_at >= NOW() - INTERVAL '24 hours'
+                GROUP BY bucket
+                ORDER BY bucket
+                """,
+                (website_id,),
+            )
+            chart_24h = [
+                {"t": r["bucket"].isoformat(), "ms": int(r["avg_ms"])}
+                for r in cur.fetchall()
+            ]
+
+            # Chart data — last 7 days, hourly buckets
+            cur.execute(
+                """
+                SELECT
+                    date_trunc('hour', checked_at) AS bucket,
+                    ROUND(AVG(response_time_ms))   AS avg_ms
+                FROM website_monitor_history
+                WHERE website_id = %s
+                  AND response_time_ms IS NOT NULL
+                  AND checked_at >= NOW() - INTERVAL '7 days'
+                GROUP BY bucket
+                ORDER BY bucket
+                """,
+                (website_id,),
+            )
+            chart_7d = [
+                {"t": r["bucket"].isoformat(), "ms": int(r["avg_ms"])}
+                for r in cur.fetchall()
+            ]
+
+            # Chart data — last 30 days, 6-hour buckets
+            cur.execute(
+                """
+                SELECT
+                    date_trunc('day', checked_at)
+                        + INTERVAL '6 hours' * (EXTRACT(HOUR FROM checked_at)::int / 6)
+                        AS bucket,
+                    ROUND(AVG(response_time_ms)) AS avg_ms
+                FROM website_monitor_history
+                WHERE website_id = %s
+                  AND response_time_ms IS NOT NULL
+                  AND checked_at >= NOW() - INTERVAL '30 days'
+                GROUP BY bucket
+                ORDER BY bucket
+                """,
+                (website_id,),
+            )
+            chart_30d = [
+                {"t": r["bucket"].isoformat(), "ms": int(r["avg_ms"])}
+                for r in cur.fetchall()
+            ]
+
+    return {
+        "uptime_24h":  uptime_24h,
+        "uptime_7d":   uptime_7d,
+        "uptime_30d":  uptime_30d,
+        "avg_ms":      round(float(rt["avg_ms"]), 1) if rt and rt["avg_ms"] else None,
+        "min_ms":      int(rt["min_ms"]) if rt and rt["min_ms"] else None,
+        "max_ms":      int(rt["max_ms"]) if rt and rt["max_ms"] else None,
+        "chart_24h":   chart_24h,
+        "chart_7d":    chart_7d,
+        "chart_30d":   chart_30d,
+    }
