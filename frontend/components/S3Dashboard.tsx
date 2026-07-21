@@ -1,8 +1,9 @@
 "use client";
 
-import { useState, useEffect, useCallback, useMemo } from "react";
+import { useState, useCallback, useMemo } from "react";
 import { RefreshCw, Database, Globe, ChevronUp, ChevronDown, ChevronsUpDown, Copy, Check } from "lucide-react";
 import { fetchS3Buckets, triggerSchedulerPoll } from "@/lib/api";
+import { useResourceLoad } from "@/lib/useInitialFetch";
 import { S3Bucket } from "@/lib/types";
 import StatCard from "./StatCard";
 import SkeletonRow from "./SkeletonRow";
@@ -157,40 +158,23 @@ function S3Table({
 
 export default function S3Dashboard() {
   const [buckets, setBuckets] = useState<S3Bucket[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
-  const [refreshing, setRefreshing] = useState(false);
+
+  const beforeRefresh = useCallback(async () => {
+    await triggerSchedulerPoll();
+    await new Promise((r) => setTimeout(r, 2000));
+  }, []);
+
+  const { loading, error, lastUpdated, refreshing, load } = useResourceLoad({
+    fetcher: fetchS3Buckets,
+    onData: setBuckets,
+    beforeRefresh,
+  });
 
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState<PageSize>(10);
 
   const { filterState, setFilter, clearFilters, search, setSearch, debouncedSearch } =
     useFilterState({ onFilterChange: () => setPage(1) });
-
-  useEffect(() => { setPage(1); }, [debouncedSearch]);
-
-  const load = useCallback(async (isRefresh = false) => {
-    if (isRefresh) {
-      setRefreshing(true);
-      try { await triggerSchedulerPoll(); await new Promise((r) => setTimeout(r, 2000)); } catch { /* best-effort */ }
-    } else {
-      setLoading(true);
-    }
-    setError(null);
-    try {
-      const data = await fetchS3Buckets();
-      setBuckets(data);
-      setLastUpdated(new Date());
-    } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : "Unknown error");
-    } finally {
-      setLoading(false);
-      setRefreshing(false);
-    }
-  }, []);
-
-  useEffect(() => { load(); }, [load]);
 
   // ── Derived ────────────────────────────────────────────────────────────
 

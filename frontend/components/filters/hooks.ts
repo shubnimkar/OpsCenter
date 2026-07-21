@@ -9,11 +9,19 @@ import type { FilterState } from "./types";
  * Debounces a value by the given delay (ms).
  * Use this for search input to avoid firing on every keystroke.
  */
-export function useDebounce<T>(value: T, delay = 300): T {
+export function useDebounce<T>(value: T, delay = 300, onDebounced?: (value: T) => void): T {
   const [debounced, setDebounced] = useState<T>(value);
+  const onDebouncedRef = useRef(onDebounced);
 
   useEffect(() => {
-    const id = setTimeout(() => setDebounced(value), delay);
+    onDebouncedRef.current = onDebounced;
+  }, [onDebounced]);
+
+  useEffect(() => {
+    const id = setTimeout(() => {
+      setDebounced(value);
+      onDebouncedRef.current?.(value);
+    }, delay);
     return () => clearTimeout(id);
   }, [value, delay]);
 
@@ -78,7 +86,7 @@ export function useFilterState(
 
   const [filterState, setFilterState] = useState<FilterState>({});
   const [search, setSearchRaw] = useState("");
-  const debouncedSearch = useDebounce(search, 300);
+  const debouncedSearch = useDebounce(search, 300, () => onFilterChange?.());
 
   const setFilter = useCallback(
     (key: string, values: string[]) => {

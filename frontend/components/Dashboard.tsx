@@ -1,8 +1,9 @@
 "use client";
 
-import { useState, useEffect, useCallback, useMemo } from "react";
+import { useState, useCallback, useMemo } from "react";
 import { RefreshCw, Server, Activity, StopCircle, Copy, Check } from "lucide-react";
 import { fetchInstances, triggerSchedulerPoll } from "@/lib/api";
+import { useResourceLoad } from "@/lib/useInitialFetch";
 import { Instance } from "@/lib/types";
 import StatCard from "./StatCard";
 import InstanceTable from "./InstanceTable";
@@ -45,10 +46,17 @@ function CopyErrorButton({ error }: { error: string }) {
 
 export default function Dashboard() {
   const [instances, setInstances] = useState<Instance[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
-  const [refreshing, setRefreshing] = useState(false);
+
+  const beforeRefresh = useCallback(async () => {
+    await triggerSchedulerPoll();
+    await new Promise((r) => setTimeout(r, 2000));
+  }, []);
+
+  const { loading, error, lastUpdated, refreshing, load } = useResourceLoad({
+    fetcher: fetchInstances,
+    onData: setInstances,
+    beforeRefresh,
+  });
 
   // Pagination
   const [page, setPage] = useState(1);
@@ -63,37 +71,6 @@ export default function Dashboard() {
     setSearch,
     debouncedSearch,
   } = useFilterState({ onFilterChange: () => setPage(1) });
-
-  // Reset page when debounced search changes
-  useEffect(() => { setPage(1); }, [debouncedSearch]);
-
-  const load = useCallback(async (isRefresh = false) => {
-    if (isRefresh) {
-      setRefreshing(true);
-      try {
-        await triggerSchedulerPoll();
-        await new Promise((r) => setTimeout(r, 2000));
-      } catch {
-        // best-effort
-      }
-    } else {
-      setLoading(true);
-    }
-    setError(null);
-
-    try {
-      const data = await fetchInstances();
-      setInstances(data);
-      setLastUpdated(new Date());
-    } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : "Unknown error");
-    } finally {
-      setLoading(false);
-      setRefreshing(false);
-    }
-  }, []);
-
-  useEffect(() => { load(); }, [load]);
 
   // ── Derived option lists ────────────────────────────────────────────────
 

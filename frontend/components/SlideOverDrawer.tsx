@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { X } from "lucide-react";
 
@@ -17,10 +17,10 @@ export default function SlideOverDrawer({
   title,
   children,
 }: SlideOverDrawerProps) {
-  // SSR guard — only render portal after mount
-  const [mounted, setMounted] = useState(false);
   const panelRef = useRef<HTMLDivElement>(null);
+  const [mounted, setMounted] = useState(false);
 
+  // Only render the portal after hydration to avoid SSR/client mismatch
   useEffect(() => {
     setMounted(true);
   }, []);

@@ -86,13 +86,13 @@ export default function TopNavbar() {
         </Link>
       </nav>
 
-      {/* Theme toggle */}
+      {/* Theme toggle — rendered only after mount to avoid SSR/hydration mismatch */}
       <button
         onClick={toggle}
         aria-label="Toggle theme"
         className="p-1.5 rounded-lg text-slate-400 hover:text-slate-600 hover:bg-slate-100 dark:text-slate-500 dark:hover:text-slate-300 dark:hover:bg-white/5 transition-colors"
       >
-        {theme === "dark" ? <Sun size={16} /> : <Moon size={16} />}
+        {theme === null ? null : theme === "dark" ? <Sun size={16} /> : <Moon size={16} />}
       </button>
     </header>
   );

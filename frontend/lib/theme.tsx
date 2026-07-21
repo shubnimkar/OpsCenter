@@ -5,25 +5,30 @@ import { createContext, useContext, useEffect, useState } from "react";
 type Theme = "light" | "dark";
 
 const ThemeContext = createContext<{
-  theme: Theme;
+  theme: Theme | null;
   toggle: () => void;
-}>({ theme: "dark", toggle: () => {} });
+}>({ theme: null, toggle: () => {} });
 
 export function ThemeProvider({ children }: { children: React.ReactNode }) {
-  const [theme, setTheme] = useState<Theme>("dark");
+  const [theme, setTheme] = useState<Theme | null>(null);
 
+  // Initialise from localStorage after mount to avoid SSR/client mismatch
   useEffect(() => {
-    const saved = localStorage.getItem("theme") as Theme | null;
-    const initial = saved ?? "dark";
-    setTheme(initial);
-    document.documentElement.classList.toggle("dark", initial === "dark");
+    const stored = (localStorage.getItem("theme") as Theme | null) ?? "dark";
+    setTheme(stored);
+    document.documentElement.classList.toggle("dark", stored === "dark");
   }, []);
 
+  useEffect(() => {
+    if (theme !== null) {
+      document.documentElement.classList.toggle("dark", theme === "dark");
+    }
+  }, [theme]);
+
   const toggle = () => {
-    setTheme(prev => {
-      const next = prev === "dark" ? "light" : "dark";
+    setTheme((prev) => {
+      const next = (prev ?? "dark") === "dark" ? "light" : "dark";
       localStorage.setItem("theme", next);
-      document.documentElement.classList.toggle("dark", next === "dark");
       return next;
     });
   };

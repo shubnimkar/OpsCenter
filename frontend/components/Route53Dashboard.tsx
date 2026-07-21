@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useCallback, useRef, useEffect } from "react";
 import {
   RefreshCw, Globe, Search, ChevronDown, ChevronUp, ChevronsUpDown,
   Copy, Check, X, Lock, Unlock, List,
@@ -9,6 +9,7 @@ import {
   fetchRoute53Zones, fetchRoute53Records,
   triggerSchedulerPoll,
 } from "@/lib/api";
+import { useResourceLoad } from "@/lib/useInitialFetch";
 import { Route53Zone, Route53Record } from "@/lib/types";
 import StatCard from "./StatCard";
 import SkeletonRow from "./SkeletonRow";
@@ -416,11 +417,28 @@ type TabId = "zones" | "records";
 export default function Route53Dashboard() {
   const [zones, setZones] = useState<Route53Zone[]>([]);
   const [records, setRecords] = useState<Route53Record[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
-  const [refreshing, setRefreshing] = useState(false);
   const [activeTab, setActiveTab] = useState<TabId>("zones");
+
+  const beforeRefresh = useCallback(async () => {
+    await triggerSchedulerPoll();
+    await new Promise((r) => setTimeout(r, 2000));
+  }, []);
+
+  const fetchRoute53Data = useCallback(
+    () => Promise.all([fetchRoute53Zones(), fetchRoute53Records()]),
+    [],
+  );
+
+  const onRoute53Data = useCallback(([z, r]: [Route53Zone[], Route53Record[]]) => {
+    setZones(z);
+    setRecords(r);
+  }, []);
+
+  const { loading, error, lastUpdated, refreshing, load } = useResourceLoad({
+    fetcher: fetchRoute53Data,
+    onData: onRoute53Data,
+    beforeRefresh,
+  });
 
   // Zone filters
   const [zoneSearch, setZoneSearch] = useState("");
@@ -441,34 +459,6 @@ export default function Route53Dashboard() {
   // Drawers
   const [selectedZone, setSelectedZone] = useState<Route53Zone | null>(null);
   const [selectedRecord, setSelectedRecord] = useState<Route53Record | null>(null);
-
-  const load = useCallback(async (isRefresh = false) => {
-    if (isRefresh) {
-      setRefreshing(true);
-      try { await triggerSchedulerPoll(); await new Promise((r) => setTimeout(r, 2000)); } catch { /* best-effort */ }
-    } else {
-      setLoading(true);
-    }
-    setError(null);
-    try {
-      const [z, r] = await Promise.all([fetchRoute53Zones(), fetchRoute53Records()]);
-      setZones(z);
-      setRecords(r);
-      setLastUpdated(new Date());
-      if (!isRefresh) {
-        setSelectedZoneProfiles([...new Set(z.map((x) => x.Profile))]);
-        setSelectedRecordProfiles([...new Set(r.map((x) => x.Profile))]);
-        setSelectedRecordTypes([...new Set(r.map((x) => x.RecordType))]);
-      }
-    } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : "Unknown error");
-    } finally {
-      setLoading(false);
-      setRefreshing(false);
-    }
-  }, []);
-
-  useEffect(() => { load(); }, [load]);
 
   // Derived
   const allZoneProfiles = [...new Set(zones.map((z) => z.Profile))].sort();

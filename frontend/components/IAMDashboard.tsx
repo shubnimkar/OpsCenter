@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useCallback, useRef, useEffect } from "react";
 import {
   RefreshCw, Users, Shield, UserCheck, Key, ChevronDown, ChevronUp,
   ChevronsUpDown, Copy, Check, X, Search,
@@ -10,6 +10,7 @@ import {
   fetchIAMUsers, fetchIAMRoles, fetchIAMGroups,
   triggerSchedulerPoll,
 } from "@/lib/api";
+import { useResourceLoad } from "@/lib/useInitialFetch";
 import { IAMUser, IAMRole, IAMGroup, InlinePolicy, AccessKeyDetail } from "@/lib/types";
 import StatCard from "./StatCard";
 import SkeletonRow from "./SkeletonRow";
@@ -896,10 +897,27 @@ export default function IAMDashboard() {
   const [roles,  setRoles]  = useState<IAMRole[]>([]);
   const [groups, setGroups] = useState<IAMGroup[]>([]);
 
-  const [loading,   setLoading]   = useState(true);
-  const [error,     setError]     = useState<string | null>(null);
-  const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
-  const [refreshing,  setRefreshing]  = useState(false);
+  const beforeRefresh = useCallback(async () => {
+    await triggerSchedulerPoll();
+    await new Promise((r) => setTimeout(r, 2000));
+  }, []);
+
+  const fetchIamData = useCallback(
+    () => Promise.all([fetchIAMUsers(), fetchIAMRoles(), fetchIAMGroups()]),
+    [],
+  );
+
+  const onIamData = useCallback(([u, r, g]: [IAMUser[], IAMRole[], IAMGroup[]]) => {
+    setUsers(u);
+    setRoles(r);
+    setGroups(g);
+  }, []);
+
+  const { loading, error, lastUpdated, refreshing, load } = useResourceLoad({
+    fetcher: fetchIamData,
+    onData: onIamData,
+    beforeRefresh,
+  });
 
   const [activeTab, setActiveTab] = useState<ActiveTab>("users");
   const [selectedUser, setSelectedUser] = useState<IAMUser | null>(null);
@@ -920,35 +938,6 @@ export default function IAMDashboard() {
   const [groupProfiles, setGroupProfiles] = useState<string[]>([]);
   const [groupPage,     setGroupPage]     = useState(1);
   const [groupPageSize, setGroupPageSize] = useState<PageSize>(10);
-
-  const load = useCallback(async (isRefresh = false) => {
-    if (isRefresh) {
-      setRefreshing(true);
-      try { await triggerSchedulerPoll(); await new Promise((r) => setTimeout(r, 2000)); } catch { /* best-effort */ }
-    } else {
-      setLoading(true);
-    }
-    setError(null);
-    try {
-      const [u, r, g] = await Promise.all([fetchIAMUsers(), fetchIAMRoles(), fetchIAMGroups()]);
-      setUsers(u);
-      setRoles(r);
-      setGroups(g);
-      setLastUpdated(new Date());
-      if (!isRefresh) {
-        setUserProfiles([...new Set(u.map((x) => x.Profile))]);
-        setRoleProfiles([...new Set(r.map((x) => x.Profile))]);
-        setGroupProfiles([...new Set(g.map((x) => x.Profile))]);
-      }
-    } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : "Unknown error");
-    } finally {
-      setLoading(false);
-      setRefreshing(false);
-    }
-  }, []);
-
-  useEffect(() => { load(); }, [load]);
 
   // ── Derived ──────────────────────────────────────────────────────────────
   const allUserProfiles  = [...new Set(users.map((u) => u.Profile))].sort();

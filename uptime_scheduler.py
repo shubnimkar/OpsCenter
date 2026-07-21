@@ -18,6 +18,7 @@ monitoring frequency.
 """
 
 import logging
+import os
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta, timezone
@@ -30,9 +31,37 @@ logger = logging.getLogger(__name__)
 TICK_SECONDS   = 60          # How often the scheduler checks for due sites
 MAX_WORKERS    = 10          # Parallel HTTP checks per tick
 UPTIME_JOB_ID  = "uptime_monitor_tick"
+HISTORY_RETENTION_DAYS = int(os.getenv("UPTIME_HISTORY_RETENTION_DAYS", "90"))
+
+_last_purge_hour: int | None = None
 
 # Module-level reference so api.py can call run_check_for_website()
 _executor = ThreadPoolExecutor(max_workers=MAX_WORKERS, thread_name_prefix="uptime-check")
+
+
+def _maybe_purge_history() -> None:
+    """Delete uptime history older than HISTORY_RETENTION_DAYS (once per UTC hour)."""
+    global _last_purge_hour
+    hour = datetime.now(timezone.utc).hour
+    if _last_purge_hour == hour:
+        return
+    _last_purge_hour = hour
+    try:
+        with get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    DELETE FROM website_monitor_history
+                    WHERE checked_at < NOW() - make_interval(days => %s)
+                    """,
+                    (HISTORY_RETENTION_DAYS,),
+                )
+                deleted = cur.rowcount
+            conn.commit()
+        if deleted:
+            logger.info("Purged %d uptime history row(s) older than %d days", deleted, HISTORY_RETENTION_DAYS)
+    except Exception as exc:
+        logger.warning("Failed to purge uptime history: %s", exc)
 
 
 # ── Core check function ───────────────────────────────────────────────────────
@@ -134,6 +163,7 @@ def _uptime_tick() -> None:
     Called by APScheduler every TICK_SECONDS.
     Loads all sites and dispatches checks for those that are due.
     """
+    _maybe_purge_history()
     try:
         with get_connection() as conn:
             with conn.cursor() as cur:

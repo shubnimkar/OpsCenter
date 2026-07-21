@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useCallback, useRef, useEffect } from "react";
 import {
   RefreshCw, Mail, Globe, Search, ChevronDown, ChevronUp, ChevronsUpDown,
   Copy, Check, X, ShieldCheck, ShieldOff, Gauge, AlertTriangle,
@@ -9,6 +9,7 @@ import {
   fetchSESIdentities, fetchSESSendingQuotas, fetchSESAccountStats,
   triggerSchedulerPoll,
 } from "@/lib/api";
+import { useResourceLoad } from "@/lib/useInitialFetch";
 import { SESIdentity, SESSendingQuota, SESAccountStats } from "@/lib/types";
 import StatCard from "./StatCard";
 import SkeletonRow from "./SkeletonRow";
@@ -465,12 +466,30 @@ export default function SESDashboard() {
   const [identities, setIdentities] = useState<SESIdentity[]>([]);
   const [quotas, setQuotas] = useState<SESSendingQuota[]>([]);
   const [accountStats, setAccountStats] = useState<SESAccountStats[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
-  const [refreshing, setRefreshing] = useState(false);
   const [selectedIdentity, setSelectedIdentity] = useState<SESIdentity | null>(null);
   const [activeTab, setActiveTab] = useState<ActiveTab>("identities");
+
+  const beforeRefresh = useCallback(async () => {
+    await triggerSchedulerPoll();
+    await new Promise((r) => setTimeout(r, 2000));
+  }, []);
+
+  const fetchSesData = useCallback(
+    () => Promise.all([fetchSESIdentities(), fetchSESSendingQuotas(), fetchSESAccountStats()]),
+    [],
+  );
+
+  const onSesData = useCallback(([idData, quotaData, statsData]: [SESIdentity[], SESSendingQuota[], SESAccountStats[]]) => {
+    setIdentities(idData);
+    setQuotas(quotaData);
+    setAccountStats(statsData);
+  }, []);
+
+  const { loading, error, lastUpdated, refreshing, load } = useResourceLoad({
+    fetcher: fetchSesData,
+    onData: onSesData,
+    beforeRefresh,
+  });
 
   // Identity filters
   const [search, setSearch] = useState("");
@@ -480,36 +499,6 @@ export default function SESDashboard() {
   const [selectedStatuses, setSelectedStatuses] = useState<string[]>([]);
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState<PageSize>(10);
-
-  const load = useCallback(async (isRefresh = false) => {
-    if (isRefresh) {
-      setRefreshing(true);
-      try { await triggerSchedulerPoll(); await new Promise((r) => setTimeout(r, 2000)); } catch { /* best-effort */ }
-    } else {
-      setLoading(true);
-    }
-    setError(null);
-    try {
-      const [idData, quotaData, statsData] = await Promise.all([fetchSESIdentities(), fetchSESSendingQuotas(), fetchSESAccountStats()]);
-      setIdentities(idData);
-      setQuotas(quotaData);
-      setAccountStats(statsData);
-      setLastUpdated(new Date());
-      if (!isRefresh) {
-        setSelectedProfiles([...new Set(idData.map((d) => d.Profile))]);
-        setSelectedRegions([...new Set(idData.map((d) => d.Region))]);
-        setSelectedTypes([...new Set(idData.map((d) => d.IdentityType))]);
-        setSelectedStatuses([...new Set(idData.map((d) => d.VerificationStatus))]);
-      }
-    } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : "Unknown error");
-    } finally {
-      setLoading(false);
-      setRefreshing(false);
-    }
-  }, []);
-
-  useEffect(() => { load(); }, [load]);
 
   // ── Derived ──────────────────────────────────────────────────────────────
 
@@ -521,8 +510,6 @@ export default function SESDashboard() {
 
   const total         = identities.length;
   const verifiedCount = identities.filter((d) => d.VerificationStatus === "Success").length;
-  const domainCount   = identities.filter((d) => d.IdentityType === "Domain").length;
-  const emailCount    = identities.filter((d) => d.IdentityType === "EmailAddress").length;
 
   // Aggregate quota stats across all regions/profiles
   const totalMax24h  = quotas.reduce((s, q) => s + q.Max24HourSend, 0);
@@ -532,7 +519,6 @@ export default function SESDashboard() {
   const productionCount = accountStats.filter((s) => !s.InSandbox).length;
   const sandboxCount    = accountStats.filter((s) => s.InSandbox).length;
   const totalBounces    = accountStats.reduce((s, r) => s + r.TotalBounces, 0);
-  const totalComplaints = accountStats.reduce((s, r) => s + r.TotalComplaints, 0);
   const totalDelivered  = accountStats.reduce((s, r) => s + r.TotalDeliveryAttempts, 0);
 
   const filtered = identities.filter((d) => {

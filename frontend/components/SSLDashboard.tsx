@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useCallback, useRef, useMemo } from "react";
 import {
   RefreshCw, Shield, ShieldAlert, ShieldOff, ShieldCheck,
   Search, ChevronDown, ChevronUp, ChevronsUpDown,
@@ -13,6 +13,9 @@ import {
   deleteSSLCertificate,
   refreshSSLCertificate,
 } from "@/lib/api";
+import { useResourceLoad } from "@/lib/useInitialFetch";
+import { FilterToolbar, useFilterState, applyFilters } from "./filters";
+import type { FilterConfig } from "./filters";
 import { SSLCertificate, SSLStatus } from "@/lib/types";
 import StatCard from "./StatCard";
 import SkeletonRow from "./SkeletonRow";
@@ -111,15 +114,6 @@ function DomainForm({ initial, onSave, onCancel, saving, error }: DomainFormProp
   const [environment, setEnv]       = useState(initial?.environment ?? "production");
   const [owner, setOwner]           = useState(initial?.owner ?? "");
   const [notes, setNotes]           = useState(initial?.notes ?? "");
-
-  // Sync fields when 'initial' changes (e.g. opening edit for a different domain)
-  useEffect(() => {
-    setDomainName(initial?.domain_name ?? "");
-    setPort(String(initial?.port ?? 443));
-    setEnv(initial?.environment ?? "production");
-    setOwner(initial?.owner ?? "");
-    setNotes(initial?.notes ?? "");
-  }, [initial]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -550,10 +544,12 @@ function DeleteModal({
 // ── SSLDashboard ───────────────────────────────────────────────────────────
 
 export default function SSLDashboard() {
-  const [certs, setCerts]         = useState<SSLCertificate[]>([]);
-  const [loading, setLoading]     = useState(true);
-  const [error, setError]         = useState<string | null>(null);
-  const [lastUpdated, setUpdated] = useState<Date | null>(null);
+  const [certs, setCerts] = useState<SSLCertificate[]>([]);
+
+  const { loading, error, lastUpdated, load } = useResourceLoad({
+    fetcher: fetchSSLCertificates,
+    onData: setCerts,
+  });
 
   // Drawer / modal state
   const [viewCert, setViewCert]         = useState<SSLCertificate | null>(null);
@@ -566,29 +562,26 @@ export default function SSLDashboard() {
   const [deleting, setDeleting]         = useState(false);
   const [refreshingId, setRefreshingId] = useState<number | null>(null);
 
-  // Filters
-  const [search, setSearch]             = useState("");
-  const [filterStatus, setFilterStatus] = useState<SSLStatus | "all">("all");
+  const {
+    filterState,
+    setFilter,
+    clearFilters,
+    search,
+    setSearch,
+    debouncedSearch,
+    hasActiveFilters,
+  } = useFilterState({ onFilterChange: () => setPage(1) });
 
-  // Pagination
   const [page, setPage]         = useState(1);
   const [pageSize, setPageSize] = useState<PageSize>(10);
 
-  const load = useCallback(async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      const data = await fetchSSLCertificates();
-      setCerts(data);
-      setUpdated(new Date());
-    } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : "Unknown error");
-    } finally {
-      setLoading(false);
-    }
-  }, []);
+  const STATUS_OPTIONS = useMemo(
+    () => ["valid", "expiring_soon", "expired", "error", "unknown"] as SSLStatus[],
+    [],
+  );
 
-  useEffect(() => { load(); }, [load]);
+  const filterStatus: SSLStatus | "all" =
+    filterState.status?.length === 1 ? (filterState.status[0] as SSLStatus) : "all";
 
   // ── Derived stats ────────────────────────────────────────────────────────
 
@@ -597,19 +590,43 @@ export default function SSLDashboard() {
   const expiringSoon = certs.filter((c) => c.status === "expiring_soon").length;
   const expiredCount = certs.filter((c) => c.status === "expired").length;
 
-  // ── Filter logic ─────────────────────────────────────────────────────────
+  const allOptionsByKey = useMemo(() => ({ status: STATUS_OPTIONS as string[] }), [STATUS_OPTIONS]);
 
-  const filtered = certs.filter((c) => {
-    const matchSearch = !search || c.domain_name.toLowerCase().includes(search.toLowerCase());
-    const matchStatus = filterStatus === "all" || c.status === filterStatus;
-    return matchSearch && matchStatus;
-  });
+  const filterConfigs: FilterConfig[] = useMemo(
+    () => [{
+      key: "status",
+      label: "Status",
+      type: "multi-select",
+      options: STATUS_OPTIONS.map((s) => ({
+        value: s,
+        label: STATUS_META[s].label,
+      })),
+    }],
+    [STATUS_OPTIONS],
+  );
 
-  const hasActiveFilters = search.trim() !== "" || filterStatus !== "all";
+  const filtered = useMemo(
+    () =>
+      applyFilters(
+        certs,
+        filterState,
+        debouncedSearch,
+        (c, key) => (key === "status" ? c.status : ""),
+        (c) => [c.domain_name, c.owner, c.environment, c.notes],
+      ),
+    [certs, filterState, debouncedSearch],
+  );
+
+  const hasFilters = hasActiveFilters(allOptionsByKey);
 
   const handleClearAll = () => {
-    setSearch("");
-    setFilterStatus("all");
+    clearFilters();
+    setPage(1);
+  };
+
+  const toggleStatusFilter = (status: SSLStatus) => {
+    const next = filterStatus === status ? "all" : status;
+    setFilter("status", next === "all" ? [] : [next]);
     setPage(1);
   };
 
@@ -664,7 +681,7 @@ export default function SSLDashboard() {
       setCerts((prev) => prev.filter((c) => c.id !== deleteCert.id));
       setDeleteCert(null);
     } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : "Failed to delete domain");
+      setFormError(e instanceof Error ? e.message : "Failed to delete domain");
     } finally {
       setDeleting(false);
     }
@@ -701,7 +718,7 @@ export default function SSLDashboard() {
         </div>
         <div className="flex items-center gap-2">
           <button
-            onClick={load}
+            onClick={() => load()}
             disabled={loading}
             className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium border border-slate-200 bg-white text-slate-600 hover:bg-slate-50 disabled:opacity-50 transition-colors dark:border-[#2a2d3a] dark:bg-[#161825] dark:text-slate-300 dark:hover:bg-white/5"
           >
@@ -725,7 +742,7 @@ export default function SSLDashboard() {
           value={loading ? 0 : total}
           color="blue"
           icon={<Shield size={20} />}
-          onClick={() => { setFilterStatus("all"); setPage(1); }}
+          onClick={() => { clearFilters(); setPage(1); }}
           isActive={filterStatus === "all"}
         />
         <StatCard
@@ -733,7 +750,7 @@ export default function SSLDashboard() {
           value={loading ? 0 : validCount}
           color="green"
           icon={<ShieldCheck size={20} />}
-          onClick={() => { setFilterStatus(filterStatus === "valid" ? "all" : "valid"); setPage(1); }}
+          onClick={() => toggleStatusFilter("valid")}
           isActive={filterStatus === "valid"}
         />
         <StatCard
@@ -741,7 +758,7 @@ export default function SSLDashboard() {
           value={loading ? 0 : expiringSoon}
           color="purple"
           icon={<ShieldAlert size={20} />}
-          onClick={() => { setFilterStatus(filterStatus === "expiring_soon" ? "all" : "expiring_soon"); setPage(1); }}
+          onClick={() => toggleStatusFilter("expiring_soon")}
           isActive={filterStatus === "expiring_soon"}
         />
         <StatCard
@@ -749,52 +766,37 @@ export default function SSLDashboard() {
           value={loading ? 0 : expiredCount}
           color="red"
           icon={<ShieldOff size={20} />}
-          onClick={() => { setFilterStatus(filterStatus === "expired" ? "all" : "expired"); setPage(1); }}
+          onClick={() => toggleStatusFilter("expired")}
           isActive={filterStatus === "expired"}
         />
       </div>
 
       {/* ── Filter toolbar ── */}
-      <div className="mb-4 flex items-center gap-2 flex-wrap">
-        <div className="relative">
-          <Search
-            size={14}
-            className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 dark:text-slate-500 pointer-events-none"
-          />
-          <input
-            type="text"
-            placeholder="Search domains…"
-            value={search}
-            onChange={(e) => { setSearch(e.target.value); setPage(1); }}
-            className="pl-8 pr-3 py-1.5 rounded-lg border border-slate-200 bg-white text-sm text-slate-700 placeholder-slate-400 focus:outline-none focus:border-blue-400 transition-colors dark:border-[#2a2d3a] dark:bg-[#161825] dark:text-slate-200 dark:placeholder-slate-500"
-          />
-        </div>
-
-        {hasActiveFilters && (
-          <button
-            type="button"
-            onClick={handleClearAll}
-            className="flex items-center gap-1 text-xs text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200 transition-colors"
-          >
-            <X size={12} />
-            Clear filters
-          </button>
-        )}
-
-        <div className="ml-auto flex items-center gap-3">
-          <span className="text-xs text-slate-400 dark:text-slate-500 whitespace-nowrap">
-            {filtered.length} of {total} domain{total !== 1 ? "s" : ""}
-          </span>
-          {total > 0 && (
-            <Pagination
-              total={filtered.length}
-              page={page}
-              pageSize={pageSize}
-              onPageChange={setPage}
-              onPageSizeChange={(s) => { setPageSize(s); setPage(1); }}
-            />
-          )}
-        </div>
+      <div className="mb-4">
+        <FilterToolbar
+          filters={filterConfigs}
+          filterState={filterState}
+          onFilterChange={(key, values) => { setFilter(key, values); setPage(1); }}
+          searchValue={search}
+          onSearchChange={setSearch}
+          searchPlaceholder="Search domains…"
+          hasActiveFilters={hasFilters}
+          onClearAll={handleClearAll}
+          resultCount={filtered.length}
+          totalCount={total}
+          resultLabel="domains"
+          paginationSlot={
+            total > 0 ? (
+              <Pagination
+                total={filtered.length}
+                page={page}
+                pageSize={pageSize}
+                onPageChange={setPage}
+                onPageSizeChange={(s) => { setPageSize(s); setPage(1); }}
+              />
+            ) : undefined
+          }
+        />
       </div>
 
       {/* ── Main content ── */}
@@ -802,7 +804,7 @@ export default function SSLDashboard() {
         <div className="rounded-xl border border-red-200 bg-red-50 dark:border-red-500/30 dark:bg-red-950/20 p-6 text-red-600 dark:text-red-400">
           <p className="font-semibold mb-1">Failed to load SSL certificates</p>
           <p className="text-sm font-mono opacity-80 mb-3">{error}</p>
-          <button onClick={load} className="text-sm underline hover:no-underline">
+          <button onClick={() => load()} className="text-sm underline hover:no-underline">
             Try again
           </button>
         </div>
@@ -810,7 +812,7 @@ export default function SSLDashboard() {
         <SSLTable
           certs={filtered}
           loading={loading}
-          hasActiveFilters={hasActiveFilters}
+          hasActiveFilters={hasFilters}
           onClearFilters={handleClearAll}
           page={page}
           pageSize={pageSize}
@@ -844,6 +846,7 @@ export default function SSLDashboard() {
         title={editCert ? `Edit — ${editCert.domain_name}` : "Edit Domain"}
       >
         <DomainForm
+          key={editCert?.id ?? "edit"}
           initial={editCert}
           onSave={handleEdit}
           onCancel={() => setEditCert(null)}

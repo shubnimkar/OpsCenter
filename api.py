@@ -1,3 +1,6 @@
+import os
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI, HTTPException, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, field_validator
@@ -9,27 +12,45 @@ from botocore.exceptions import ClientError, NoCredentialsError
 
 from database import get_connection, init_db
 from crypto import encrypt, decrypt
+from auth import APIKeyMiddleware
+from network_guard import assert_hostname_allowed, validate_http_url
+from sql_helpers import (
+    PROFILE_UPDATE_COLUMNS,
+    SSL_UPDATE_COLUMNS,
+    WEBSITE_UPDATE_COLUMNS,
+    build_update_clause,
+)
 from scheduler import start_scheduler, stop_scheduler, get_scheduler_status, trigger_poll, reschedule_job, MIN_INTERVAL_SECONDS, MAX_INTERVAL_SECONDS
 
-app = FastAPI(title="AWS Dashboard API")
+ALLOWED_ORIGINS = [
+    origin.strip()
+    for origin in os.getenv("ALLOWED_ORIGINS", "http://localhost:3000").split(",")
+    if origin.strip()
+]
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    init_db()
+    start_scheduler()
+    yield
+    stop_scheduler()
+
+
+app = FastAPI(title="AWS Dashboard API", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000"],
+    allow_origins=ALLOWED_ORIGINS,
     allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE"],
     allow_headers=["*"],
 )
+app.add_middleware(APIKeyMiddleware)
 
 
-@app.on_event("startup")
-def startup():
-    init_db()
-    start_scheduler()
-
-
-@app.on_event("shutdown")
-def shutdown():
-    stop_scheduler()
+@app.get("/health")
+def health():
+    return {"status": "ok"}
 
 
 # ── Schemas ──────────────────────────────────────────────────────────────────
@@ -452,8 +473,12 @@ def patch_profile(profile_id: int, payload: ProfileUpdate):
         updates["access_key"] = encrypt(updates["access_key"])
     if "secret_key" in updates:
         updates["secret_key"] = encrypt(updates["secret_key"])
-    set_clause = ", ".join(f"{col} = %s" for col in updates)
-    values = list(updates.values()) + [profile_id]
+
+    try:
+        set_clause, set_values = build_update_clause(updates, PROFILE_UPDATE_COLUMNS)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    values = set_values + [profile_id]
 
     try:
         with get_connection() as conn:
@@ -796,6 +821,10 @@ class SSLDomainCreate(BaseModel):
         v = v.split("/")[0]
         if not v:
             raise ValueError("domain_name must not be empty")
+        try:
+            assert_hostname_allowed(v)
+        except ValueError as exc:
+            raise ValueError(str(exc)) from exc
         return v
 
     @field_validator("port")
@@ -833,6 +862,10 @@ class SSLDomainUpdate(BaseModel):
         v = v.split("/")[0]
         if not v:
             raise ValueError("domain_name must not be empty")
+        try:
+            assert_hostname_allowed(v)
+        except ValueError as exc:
+            raise ValueError(str(exc)) from exc
         return v
 
     @field_validator("port", mode="before")
@@ -935,9 +968,12 @@ def update_ssl_certificate(domain_id: int, payload: SSLDomainUpdate):
     if not updates:
         raise HTTPException(status_code=400, detail="No fields provided to update")
 
-    set_clause = ", ".join(f"{col} = %s" for col in updates)
+    try:
+        set_clause, set_values = build_update_clause(updates, SSL_UPDATE_COLUMNS)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
     set_clause += ", updated_at = NOW()"
-    values = list(updates.values()) + [domain_id]
+    values = set_values + [domain_id]
 
     try:
         with get_connection() as conn:
@@ -1029,10 +1065,10 @@ class WebsiteCreate(BaseModel):
     @field_validator("url")
     @classmethod
     def valid_url(cls, v: str) -> str:
-        v = v.strip()
-        if not v.startswith(("http://", "https://")):
-            raise ValueError("url must start with http:// or https://")
-        return v
+        try:
+            return validate_http_url(v)
+        except ValueError as exc:
+            raise ValueError(str(exc)) from exc
 
     @field_validator("environment")
     @classmethod
@@ -1087,11 +1123,12 @@ class WebsiteUpdate(BaseModel):
     @field_validator("url", mode="before")
     @classmethod
     def valid_url(cls, v):
-        if v is not None:
-            v = v.strip()
-            if not v.startswith(("http://", "https://")):
-                raise ValueError("url must start with http:// or https://")
-        return v
+        if v is None:
+            return v
+        try:
+            return validate_http_url(str(v))
+        except ValueError as exc:
+            raise ValueError(str(exc)) from exc
 
     @field_validator("environment", mode="before")
     @classmethod
@@ -1216,9 +1253,12 @@ def update_website(website_id: int, payload: WebsiteUpdate):
     if not updates:
         raise HTTPException(status_code=400, detail="No fields provided to update")
 
-    set_clause = ", ".join(f"{col} = %s" for col in updates)
+    try:
+        set_clause, set_values = build_update_clause(updates, WEBSITE_UPDATE_COLUMNS)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
     set_clause += ", updated_at = NOW()"
-    values = list(updates.values()) + [website_id]
+    values = set_values + [website_id]
 
     try:
         with get_connection() as conn:

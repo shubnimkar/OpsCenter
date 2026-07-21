@@ -28,6 +28,8 @@ from requests.exceptions import (
     RequestException,
 )
 
+from network_guard import validate_http_url
+
 logger = logging.getLogger(__name__)
 
 # Response time threshold above which a website is considered "degraded" (ms)
@@ -59,6 +61,16 @@ def check_website(
             "http_status": None,
             "response_time_ms": None,
             "error_message": None,
+        }
+
+    try:
+        url = validate_http_url(url)
+    except ValueError as exc:
+        return {
+            "status": "offline",
+            "http_status": None,
+            "response_time_ms": None,
+            "error_message": str(exc),
         }
 
     start = time.monotonic()

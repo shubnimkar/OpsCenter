@@ -14,6 +14,8 @@ from datetime import datetime, timezone
 from cryptography import x509
 from cryptography.hazmat.backends import default_backend
 
+from network_guard import validate_tls_target
+
 logger = logging.getLogger(__name__)
 
 # Days threshold for "Expiring Soon" status
@@ -40,6 +42,20 @@ def fetch_ssl_info(domain: str, port: int = 443, timeout: int = 10) -> dict:
     Returns a dict with:
         issuer, valid_from, expiry_date, days_remaining, status, error (None if ok)
     """
+    try:
+        domain, port = validate_tls_target(domain, port)
+    except ValueError as exc:
+        return {
+            "issuer": "",
+            "valid_from": None,
+            "expiry_date": None,
+            "days_remaining": None,
+            "status": "error",
+            "san_list": [],
+            "key_algorithm": "",
+            "error": str(exc),
+        }
+
     ctx = ssl.create_default_context()
     # Disable verification so we can inspect expired / self-signed certs
     ctx.check_hostname = False

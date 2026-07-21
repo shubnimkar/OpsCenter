@@ -1,12 +1,13 @@
 "use client";
 
-import { useState, useEffect, useCallback, useMemo } from "react";
+import { useState, useCallback, useMemo } from "react";
 import {
   RefreshCw, Zap, Globe,
   ChevronDown, ChevronUp, ChevronsUpDown,
   Copy, Check,
 } from "lucide-react";
 import { fetchLambdas, triggerSchedulerPoll } from "@/lib/api";
+import { useResourceLoad } from "@/lib/useInitialFetch";
 import { LambdaFunction } from "@/lib/types";
 import StatCard from "./StatCard";
 import SkeletonRow from "./SkeletonRow";
@@ -190,41 +191,24 @@ function LambdaTable({ functions, loading, onClearFilters, hasActiveFilters, pag
 
 export default function LambdaDashboard() {
   const [functions, setFunctions] = useState<LambdaFunction[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
-  const [refreshing, setRefreshing] = useState(false);
   const [selectedFn, setSelectedFn] = useState<LambdaFunction | null>(null);
+
+  const beforeRefresh = useCallback(async () => {
+    await triggerSchedulerPoll();
+    await new Promise((r) => setTimeout(r, 2000));
+  }, []);
+
+  const { loading, error, lastUpdated, refreshing, load } = useResourceLoad({
+    fetcher: fetchLambdas,
+    onData: setFunctions,
+    beforeRefresh,
+  });
 
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState<PageSize>(10);
 
   const { filterState, setFilter, clearFilters, search, setSearch, debouncedSearch } =
     useFilterState({ onFilterChange: () => setPage(1) });
-
-  useEffect(() => { setPage(1); }, [debouncedSearch]);
-
-  const load = useCallback(async (isRefresh = false) => {
-    if (isRefresh) {
-      setRefreshing(true);
-      try { await triggerSchedulerPoll(); await new Promise((r) => setTimeout(r, 2000)); } catch { /* best-effort */ }
-    } else {
-      setLoading(true);
-    }
-    setError(null);
-    try {
-      const data = await fetchLambdas();
-      setFunctions(data);
-      setLastUpdated(new Date());
-    } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : "Unknown error");
-    } finally {
-      setLoading(false);
-      setRefreshing(false);
-    }
-  }, []);
-
-  useEffect(() => { load(); }, [load]);
 
   // ── Derived option lists ────────────────────────────────────────────────
 
