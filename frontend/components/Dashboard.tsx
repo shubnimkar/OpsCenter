@@ -1,13 +1,14 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
-import { RefreshCw, Server, Activity, StopCircle, Copy, Check, Clock, AlertTriangle } from "lucide-react";
-import { fetchInstances, fetchSchedulerStatus, triggerSchedulerPoll, updateSchedulerInterval, SchedulerStatus } from "@/lib/api";
+import { useState, useEffect, useCallback, useMemo } from "react";
+import { RefreshCw, Server, Activity, StopCircle, Copy, Check } from "lucide-react";
+import { fetchInstances, triggerSchedulerPoll } from "@/lib/api";
 import { Instance } from "@/lib/types";
 import StatCard from "./StatCard";
 import InstanceTable from "./InstanceTable";
-import FilterToolbar from "./FilterToolbar";
-import { PageSize } from "./Pagination";
+import { FilterToolbar, useFilterState, applyFilters } from "./filters";
+import type { FilterConfig, FilterOption } from "./filters";
+import Pagination, { PageSize } from "./Pagination";
 
 // ── CopyErrorButton ────────────────────────────────────────────────────────
 
@@ -40,93 +41,6 @@ function CopyErrorButton({ error }: { error: string }) {
   );
 }
 
-// ── SchedulerBadge ─────────────────────────────────────────────────────────
-
-const INTERVAL_PRESETS = [
-  { label: "1 min",  seconds: 60 },
-  { label: "2 min",  seconds: 120 },
-  { label: "5 min",  seconds: 300 },
-  { label: "15 min", seconds: 900 },
-  { label: "30 min", seconds: 1800 },
-];
-
-function SchedulerBadge({
-  status,
-  onIntervalChange,
-}: {
-  status: SchedulerStatus | null;
-  onIntervalChange: (seconds: number) => Promise<void>;
-}) {
-  const [updating, setUpdating] = useState(false);
-
-  if (!status) return null;
-
-  const nextRun = status.next_run_at ? new Date(status.next_run_at) : null;
-  const secondsUntil = nextRun
-    ? Math.max(0, Math.round((nextRun.getTime() - Date.now()) / 1000))
-    : null;
-
-  const statusColor =
-    status.last_status === "partial"
-      ? "text-amber-600 dark:text-amber-400"
-      : status.last_status === "error"
-      ? "text-red-500 dark:text-red-400"
-      : "";
-
-  const handleChange = async (e: React.ChangeEvent<HTMLSelectElement>) => {
-    const val = parseInt(e.target.value, 10);
-    if (!val) return;
-    setUpdating(true);
-    try {
-      await onIntervalChange(val);
-    } finally {
-      setUpdating(false);
-    }
-  };
-
-  return (
-    <div className="flex items-center gap-2 text-xs text-slate-400 flex-wrap">
-      <Clock size={12} />
-      <span>
-        Auto-refresh every
-      </span>
-      {/* Interval picker */}
-      <select
-        value={status.poll_interval_seconds}
-        onChange={handleChange}
-        disabled={updating}
-        className="text-xs rounded-md border border-slate-200 bg-white text-slate-600 px-1.5 py-0.5 disabled:opacity-50 dark:border-[#2a2d3a] dark:bg-[#161825] dark:text-slate-300 cursor-pointer hover:border-indigo-400 transition-colors"
-        aria-label="Poll interval"
-      >
-        {/* If the current value isn't in presets, show it as a custom option */}
-        {!INTERVAL_PRESETS.some(p => p.seconds === status.poll_interval_seconds) && (
-          <option value={status.poll_interval_seconds}>
-            {status.poll_interval_seconds}s
-          </option>
-        )}
-        {INTERVAL_PRESETS.map(p => (
-          <option key={p.seconds} value={p.seconds}>{p.label}</option>
-        ))}
-      </select>
-      {secondsUntil !== null && (
-        <span className="text-slate-300 dark:text-slate-600">·</span>
-      )}
-      {secondsUntil !== null && (
-        <span>next in {secondsUntil}s</span>
-      )}
-      {(status.last_status === "partial" || status.last_status === "error") && (
-        <span
-          title={status.last_error ?? undefined}
-          className={`flex items-center gap-0.5 ${statusColor}`}
-        >
-          <AlertTriangle size={12} />
-          {status.last_status === "partial" ? "some profiles failed" : "poll error"}
-        </span>
-      )}
-    </div>
-  );
-}
-
 // ── Dashboard ──────────────────────────────────────────────────────────────
 
 export default function Dashboard() {
@@ -135,39 +49,32 @@ export default function Dashboard() {
   const [error, setError] = useState<string | null>(null);
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
   const [refreshing, setRefreshing] = useState(false);
-  const [schedulerStatus, setSchedulerStatus] = useState<SchedulerStatus | null>(null);
-
-  // Filters
-  const [search, setSearch] = useState("");
-  const [selectedProfiles, setSelectedProfiles] = useState<string[]>([]);
-  const [selectedStates, setSelectedStates] = useState<string[]>([]);
-  const [selectedTypes, setSelectedTypes] = useState<string[]>([]);
-  const [activeStatCardFilter, setActiveStatCardFilter] = useState<string | null>(null);
 
   // Pagination
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState<PageSize>(10);
 
-  const loadStatus = useCallback(async () => {
-    try {
-      const s = await fetchSchedulerStatus();
-      setSchedulerStatus(s);
-    } catch {
-      // non-critical — silently ignore
-    }
-  }, []);
+  // Filter state — convention: [] = show all
+  const {
+    filterState,
+    setFilter,
+    clearFilters,
+    search,
+    setSearch,
+    debouncedSearch,
+  } = useFilterState({ onFilterChange: () => setPage(1) });
+
+  // Reset page when debounced search changes
+  useEffect(() => { setPage(1); }, [debouncedSearch]);
 
   const load = useCallback(async (isRefresh = false) => {
     if (isRefresh) {
       setRefreshing(true);
-      // Tell the backend to kick off a fresh AWS poll, then wait briefly
-      // before reading the cache so we get up-to-date data.
       try {
         await triggerSchedulerPoll();
-        // Small delay to give the background poll time to write results
-        await new Promise(r => setTimeout(r, 2000));
+        await new Promise((r) => setTimeout(r, 2000));
       } catch {
-        // Best-effort — still reload the cache even if trigger fails
+        // best-effort
       }
     } else {
       setLoading(true);
@@ -178,93 +85,136 @@ export default function Dashboard() {
       const data = await fetchInstances();
       setInstances(data);
       setLastUpdated(new Date());
-      if (!isRefresh) {
-        setSelectedProfiles([...new Set(data.map(i => i.Profile))]);
-        setSelectedStates([...new Set(data.map(i => i.State))]);
-        setSelectedTypes([...new Set(data.map(i => i["Instance Type"]))]);
-      }
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : "Unknown error");
     } finally {
       setLoading(false);
       setRefreshing(false);
     }
-    await loadStatus();
-  }, [loadStatus]);
+  }, []);
 
   useEffect(() => { load(); }, [load]);
 
-  // Refresh the scheduler countdown every 10 seconds
-  useEffect(() => {
-    const id = setInterval(loadStatus, 10_000);
-    return () => clearInterval(id);
-  }, [loadStatus]);
+  // ── Derived option lists ────────────────────────────────────────────────
 
-  // ── Derived data ───────────────────────────────────────────────────────
-
-  const allProfiles = [...new Set(instances.map(i => i.Profile))].sort();
-  const allStates   = [...new Set(instances.map(i => i.State))].sort();
-  const allTypes    = [...new Set(instances.map(i => i["Instance Type"]))].sort();
-
-  const profileColorMap = Object.fromEntries(
-    instances.map(i => [i.Profile, i.ProfileColor])
+  const allProfiles = useMemo(
+    () => [...new Set(instances.map((i) => i.Profile))].sort(),
+    [instances]
+  );
+  const allStates = useMemo(
+    () => [...new Set(instances.map((i) => i.State))].sort(),
+    [instances]
+  );
+  const allTypes = useMemo(
+    () => [...new Set(instances.map((i) => i["Instance Type"]))].sort(),
+    [instances]
   );
 
-  const allProfileObjects = allProfiles.map(name => ({
-    name,
-    color: profileColorMap[name] ?? "#6366f1",
-  }));
+  const profileColorMap = useMemo(
+    () => Object.fromEntries(instances.map((i) => [i.Profile, i.ProfileColor])),
+    [instances]
+  );
 
-  // ── Filter logic ───────────────────────────────────────────────────────
+  const allOptionsByKey: Record<string, string[]> = useMemo(
+    () => ({ profile: allProfiles, state: allStates, type: allTypes }),
+    [allProfiles, allStates, allTypes]
+  );
 
-  const filtered = instances.filter(i => {
-    const matchProfile = selectedProfiles.length === 0 || selectedProfiles.includes(i.Profile);
-    const matchState   = selectedStates.length === 0 || selectedStates.includes(i.State);
-    const matchType    = selectedTypes.length === 0 || selectedTypes.includes(i["Instance Type"]);
-    const matchSearch  = !search || i.Name.toLowerCase().includes(search.toLowerCase());
-    return matchProfile && matchState && matchType && matchSearch;
-  });
+  // ── Filter config ───────────────────────────────────────────────────────
+  // Recommended order: search | environment | region | status | type | profile
 
-  const total        = instances.length;
-  const runningCount = instances.filter(i => i.State === "running").length;
-  const stoppedCount = instances.filter(i => i.State === "stopped").length;
+  const profileOptions: FilterOption[] = useMemo(
+    () =>
+      allProfiles.map((name) => ({
+        value: name,
+        label: name,
+        color: profileColorMap[name] ?? "#6366f1",
+      })),
+    [allProfiles, profileColorMap]
+  );
 
-  // ── Handlers ───────────────────────────────────────────────────────────
+  const filters: FilterConfig[] = useMemo(
+    () => [
+      {
+        key: "state",
+        label: "State",
+        type: "multi-select" as const,
+        options: allStates.map((s) => ({ value: s })),
+      },
+      {
+        key: "type",
+        label: "Instance Type",
+        type: "multi-select" as const,
+        options: allTypes.map((t) => ({ value: t })),
+      },
+      {
+        key: "profile",
+        label: "Profile",
+        type: "multi-select" as const,
+        options: profileOptions,
+      },
+    ],
+    [allStates, allTypes, profileOptions]
+  );
+
+  // ── Active filter detection ─────────────────────────────────────────────
+
+  const hasActiveFilters = useMemo(() => {
+    if (debouncedSearch.trim()) return true;
+    return Object.entries(filterState).some(([key, selected]) => {
+      const total = allOptionsByKey[key]?.length ?? 0;
+      return selected.length > 0 && selected.length < total;
+    });
+  }, [filterState, debouncedSearch, allOptionsByKey]);
+
+  // ── Filter logic ────────────────────────────────────────────────────────
+
+  const filtered = useMemo(
+    () =>
+      applyFilters(
+        instances,
+        filterState,
+        debouncedSearch,
+        (inst, key) => {
+          if (key === "profile") return inst.Profile;
+          if (key === "state") return inst.State;
+          if (key === "type") return inst["Instance Type"];
+          return "";
+        },
+        (inst) => [inst.Name]
+      ),
+    [instances, filterState, debouncedSearch]
+  );
+
+  // ── Stat counts ─────────────────────────────────────────────────────────
+
+  const total = instances.length;
+  const runningCount = useMemo(
+    () => instances.filter((i) => i.State === "running").length,
+    [instances]
+  );
+  const stoppedCount = useMemo(
+    () => instances.filter((i) => i.State === "stopped").length,
+    [instances]
+  );
+
+  // ── Handlers ────────────────────────────────────────────────────────────
 
   const handleStatCardClick = (state: string) => {
-    if (activeStatCardFilter === state) {
-      setActiveStatCardFilter(null);
-      setSelectedStates([...new Set(instances.map(i => i.State))]);
+    const current = filterState["state"] ?? [];
+    if (current.length === 1 && current[0] === state) {
+      // Toggle off — clear the state filter
+      setFilter("state", []);
     } else {
-      setActiveStatCardFilter(state);
-      setSelectedStates([state]);
+      setFilter("state", [state]);
     }
-  };
-
-  const handleIntervalChange = async (seconds: number) => {
-    try {
-      const updated = await updateSchedulerInterval(seconds);
-      setSchedulerStatus(updated);
-    } catch {
-      // non-critical — ignore silently; the badge will still show the old value
-    }
-  };
-  const handleClearAll = () => {
-    setSearch("");
-    setSelectedProfiles([...new Set(instances.map(i => i.Profile))]);
-    setSelectedStates([...new Set(instances.map(i => i.State))]);
-    setSelectedTypes([...new Set(instances.map(i => i["Instance Type"]))]);
-    setActiveStatCardFilter(null);
     setPage(1);
   };
 
-  const hasActiveFilters =
-    search.trim() !== "" ||
-    (selectedProfiles.length > 0 && selectedProfiles.length < allProfiles.length) ||
-    (selectedStates.length > 0 && selectedStates.length < allStates.length) ||
-    (selectedTypes.length > 0 && selectedTypes.length < allTypes.length);
-
-  // ── Stat card ratio helpers ────────────────────────────────────────────
+  const handleClearAll = () => {
+    clearFilters();
+    setPage(1);
+  };
 
   const ratio = (value: number, t: number) =>
     t === 0
@@ -277,12 +227,11 @@ export default function Dashboard() {
       <div className="flex items-center justify-between mb-6">
         <div>
           <h2 className="text-lg font-semibold text-slate-900 dark:text-white">Instances</h2>
-          <p className="text-xs text-slate-400 mt-0.5">
-            {lastUpdated && `Cache read at ${lastUpdated.toLocaleTimeString()}`}
-          </p>
-          <div className="mt-1">
-            <SchedulerBadge status={schedulerStatus} onIntervalChange={handleIntervalChange} />
-          </div>
+          {lastUpdated && (
+            <p className="text-xs text-slate-400 mt-0.5">
+              Synced {lastUpdated.toLocaleTimeString()}
+            </p>
+          )}
         </div>
         <button
           onClick={() => load(true)}
@@ -310,7 +259,10 @@ export default function Dashboard() {
           color="green"
           icon={<Activity size={20} />}
           onClick={() => handleStatCardClick("running")}
-          isActive={activeStatCardFilter === "running"}
+          isActive={
+            (filterState["state"] ?? []).length === 1 &&
+            filterState["state"][0] === "running"
+          }
           ratio={ratio(runningCount, total)}
         />
         <StatCard
@@ -320,7 +272,10 @@ export default function Dashboard() {
           color="red"
           icon={<StopCircle size={20} />}
           onClick={() => handleStatCardClick("stopped")}
-          isActive={activeStatCardFilter === "stopped"}
+          isActive={
+            (filterState["state"] ?? []).length === 1 &&
+            filterState["state"][0] === "stopped"
+          }
           ratio={ratio(stoppedCount, total)}
         />
       </div>
@@ -328,24 +283,28 @@ export default function Dashboard() {
       {/* ── Filter toolbar ── */}
       <div className="mb-4">
         <FilterToolbar
-          allProfiles={allProfileObjects}
-          allStates={allStates}
-          allTypes={allTypes}
-          selectedProfiles={selectedProfiles}
-          selectedStates={selectedStates}
-          selectedTypes={selectedTypes}
-          search={search}
+          filters={filters}
+          filterState={filterState}
+          onFilterChange={(key, values) => { setFilter(key, values); setPage(1); }}
+          searchValue={search}
+          onSearchChange={setSearch}
+          searchPlaceholder="Search instances…"
+          hasActiveFilters={hasActiveFilters}
+          onClearAll={handleClearAll}
           resultCount={filtered.length}
           totalCount={total}
-          onSearchChange={(v) => { setSearch(v); setPage(1); }}
-          onProfilesChange={(p) => { setSelectedProfiles(p); setPage(1); }}
-          onStatesChange={(s) => { setSelectedStates(s); setPage(1); }}
-          onTypesChange={(t) => { setSelectedTypes(t); setPage(1); }}
-          onClearAll={handleClearAll}
-          page={page}
-          pageSize={pageSize}
-          onPageChange={setPage}
-          onPageSizeChange={(s) => { setPageSize(s); setPage(1); }}
+          resultLabel="instances"
+          paginationSlot={
+            total > 0 ? (
+              <Pagination
+                total={filtered.length}
+                page={page}
+                pageSize={pageSize}
+                onPageChange={setPage}
+                onPageSizeChange={(s) => { setPageSize(s); setPage(1); }}
+              />
+            ) : undefined
+          }
         />
       </div>
 

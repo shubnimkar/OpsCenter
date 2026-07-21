@@ -78,6 +78,12 @@ export default function TopNavbar() {
         >
           Profiles
         </Link>
+        <Link
+          href="/settings"
+          className={pathname === "/settings" ? activeCls : inactiveCls}
+        >
+          Settings
+        </Link>
       </nav>
 
       {/* Theme toggle */}

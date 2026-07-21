@@ -4,12 +4,11 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import {
   RefreshCw, Users, Shield, UserCheck, Key, ChevronDown, ChevronUp,
   ChevronsUpDown, Copy, Check, X, Search,
-  Clock, AlertTriangle, ShieldCheck, ShieldOff, Lock, Unlock, FileText, Activity,
+  ShieldCheck, ShieldOff, Lock, Unlock, FileText, Activity,
 } from "lucide-react";
 import {
   fetchIAMUsers, fetchIAMRoles, fetchIAMGroups,
-  fetchSchedulerStatus, triggerSchedulerPoll, updateSchedulerInterval,
-  SchedulerStatus,
+  triggerSchedulerPoll,
 } from "@/lib/api";
 import { IAMUser, IAMRole, IAMGroup, InlinePolicy, AccessKeyDetail } from "@/lib/types";
 import StatCard from "./StatCard";
@@ -144,56 +143,6 @@ function DropdownChip({ label, allItems, selectedItems, onChange, renderItem }: 
             ))}
           </ul>
         </div>
-      )}
-    </div>
-  );
-}
-
-// ── SchedulerBadge ─────────────────────────────────────────────────────────
-
-const INTERVAL_PRESETS = [
-  { label: "1 min",  seconds: 60 },
-  { label: "2 min",  seconds: 120 },
-  { label: "5 min",  seconds: 300 },
-  { label: "15 min", seconds: 900 },
-  { label: "30 min", seconds: 1800 },
-];
-
-function SchedulerBadge({ status, onIntervalChange }: { status: SchedulerStatus | null; onIntervalChange: (s: number) => Promise<void> }) {
-  const [updating, setUpdating] = useState(false);
-  if (!status) return null;
-
-  const nextRun = status.next_run_at ? new Date(status.next_run_at) : null;
-  const secondsUntil = nextRun ? Math.max(0, Math.round((nextRun.getTime() - Date.now()) / 1000)) : null;
-  const statusColor = status.last_status === "partial" ? "text-amber-600 dark:text-amber-400"
-    : status.last_status === "error" ? "text-red-500 dark:text-red-400" : "";
-
-  const handleChange = async (e: React.ChangeEvent<HTMLSelectElement>) => {
-    const val = parseInt(e.target.value, 10);
-    if (!val) return;
-    setUpdating(true);
-    try { await onIntervalChange(val); } finally { setUpdating(false); }
-  };
-
-  return (
-    <div className="flex items-center gap-2 text-xs text-slate-400 flex-wrap">
-      <Clock size={12} />
-      <span>Auto-refresh every</span>
-      <select value={status.poll_interval_seconds} onChange={handleChange} disabled={updating}
-        className="text-xs rounded-md border border-slate-200 bg-white text-slate-600 px-1.5 py-0.5 disabled:opacity-50 dark:border-[#2a2d3a] dark:bg-[#161825] dark:text-slate-300 cursor-pointer hover:border-indigo-400 transition-colors"
-        aria-label="Poll interval"
-      >
-        {!INTERVAL_PRESETS.some((p) => p.seconds === status.poll_interval_seconds) && (
-          <option value={status.poll_interval_seconds}>{status.poll_interval_seconds}s</option>
-        )}
-        {INTERVAL_PRESETS.map((p) => <option key={p.seconds} value={p.seconds}>{p.label}</option>)}
-      </select>
-      {secondsUntil !== null && <><span className="text-slate-300 dark:text-slate-600">·</span><span>next in {secondsUntil}s</span></>}
-      {(status.last_status === "partial" || status.last_status === "error") && (
-        <span title={status.last_error ?? undefined} className={`flex items-center gap-0.5 ${statusColor}`}>
-          <AlertTriangle size={12} />
-          {status.last_status === "partial" ? "some profiles failed" : "poll error"}
-        </span>
       )}
     </div>
   );
@@ -951,7 +900,6 @@ export default function IAMDashboard() {
   const [error,     setError]     = useState<string | null>(null);
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
   const [refreshing,  setRefreshing]  = useState(false);
-  const [schedulerStatus, setSchedulerStatus] = useState<SchedulerStatus | null>(null);
 
   const [activeTab, setActiveTab] = useState<ActiveTab>("users");
   const [selectedUser, setSelectedUser] = useState<IAMUser | null>(null);
@@ -972,10 +920,6 @@ export default function IAMDashboard() {
   const [groupProfiles, setGroupProfiles] = useState<string[]>([]);
   const [groupPage,     setGroupPage]     = useState(1);
   const [groupPageSize, setGroupPageSize] = useState<PageSize>(10);
-
-  const loadStatus = useCallback(async () => {
-    try { setSchedulerStatus(await fetchSchedulerStatus()); } catch { /* non-critical */ }
-  }, []);
 
   const load = useCallback(async (isRefresh = false) => {
     if (isRefresh) {
@@ -1002,11 +946,9 @@ export default function IAMDashboard() {
       setLoading(false);
       setRefreshing(false);
     }
-    await loadStatus();
-  }, [loadStatus]);
+  }, []);
 
   useEffect(() => { load(); }, [load]);
-  useEffect(() => { const id = setInterval(loadStatus, 10_000); return () => clearInterval(id); }, [loadStatus]);
 
   // ── Derived ──────────────────────────────────────────────────────────────
   const allUserProfiles  = [...new Set(users.map((u) => u.Profile))].sort();
@@ -1042,10 +984,6 @@ export default function IAMDashboard() {
   const roleHasFilter  = roleSearch.trim() !== "" || (roleProfiles.length > 0 && roleProfiles.length < allRoleProfiles.length);
   const groupHasFilter = groupSearch.trim() !== "" || (groupProfiles.length > 0 && groupProfiles.length < allGroupProfiles.length);
 
-  const handleIntervalChange = async (seconds: number) => {
-    try { setSchedulerStatus(await updateSchedulerInterval(seconds)); } catch { /* non-critical */ }
-  };
-
   const tabCls = (t: ActiveTab) =>
     t === activeTab
       ? "px-4 py-2 text-sm font-medium border-b-2 border-blue-500 text-slate-900 dark:text-white transition-colors"
@@ -1061,12 +999,9 @@ export default function IAMDashboard() {
       <div className="flex items-center justify-between mb-6">
         <div>
           <h2 className="text-lg font-semibold text-slate-900 dark:text-white">IAM</h2>
-          <p className="text-xs text-slate-400 mt-0.5">
-            {lastUpdated && `Cache read at ${lastUpdated.toLocaleTimeString()}`}
-          </p>
-          <div className="mt-1">
-            <SchedulerBadge status={schedulerStatus} onIntervalChange={handleIntervalChange} />
-          </div>
+          {lastUpdated && (
+            <p className="text-xs text-slate-400 mt-0.5">Synced {lastUpdated.toLocaleTimeString()}</p>
+          )}
         </div>
         <button
           onClick={() => load(true)}

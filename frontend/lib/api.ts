@@ -180,6 +180,20 @@ export async function triggerSchedulerPoll(): Promise<{ triggered: boolean; mess
   return res.json();
 }
 
+// Trigger a specific service poll by job id
+export type SchedulerJobId = "ec2_poll" | "s3_poll" | "lambda_poll" | "iam_poll" | "ses_poll" | "route53_poll" | "ssl_poll";
+
+export async function triggerJobPoll(jobId: SchedulerJobId): Promise<{ triggered: boolean; message: string }> {
+  const res = await fetch(`${API_BASE}/api/scheduler/trigger/${jobId}`, {
+    method: "POST",
+  });
+  if (!res.ok) {
+    // Fall back to generic trigger if per-job endpoint not available
+    return triggerSchedulerPoll();
+  }
+  return res.json();
+}
+
 export async function updateSchedulerInterval(seconds: number): Promise<SchedulerStatus> {
   const res = await fetch(`${API_BASE}/api/scheduler/config`, {
     method: "PATCH",
