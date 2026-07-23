@@ -244,6 +244,19 @@ def refresh_domain(domain_id: int) -> dict | None:
             updated = cur.fetchone()
         conn.commit()
 
+    # Evaluate notification state after writing the result
+    if updated:
+        try:
+            from notifications import evaluate_ssl
+            evaluate_ssl(
+                domain_id=domain_id,
+                domain_name=updated["domain_name"],
+                new_status=updated["status"],
+                days_remaining=updated["days_remaining"],
+            )
+        except Exception as notif_exc:
+            logger.warning("SSL notification eval failed for domain_id=%d: %s", domain_id, notif_exc)
+
     return updated
 
 

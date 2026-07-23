@@ -1,13 +1,9 @@
 "use client";
 
 import React from "react";
-import { Search } from "lucide-react";
+import { Search, X } from "lucide-react";
 import type { SearchFilterProps } from "./types";
 
-/**
- * Controlled search input with leading magnifier icon.
- * Debouncing is handled upstream via useFilterState / useDebounce.
- */
 const SearchFilter = React.memo(function SearchFilter({
   value,
   onChange,
@@ -17,8 +13,9 @@ const SearchFilter = React.memo(function SearchFilter({
   return (
     <div className={`relative ${className}`}>
       <Search
-        size={14}
-        className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 dark:text-slate-500 pointer-events-none"
+        size={13}
+        className="absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none"
+        style={{ color: "var(--text-tertiary)" }}
         aria-hidden="true"
       />
       <input
@@ -28,8 +25,27 @@ const SearchFilter = React.memo(function SearchFilter({
         placeholder={placeholder}
         value={value}
         onChange={(e) => onChange(e.target.value)}
-        className="pl-8 pr-3 py-1.5 rounded-lg border border-slate-200 bg-white text-sm text-slate-700 placeholder-slate-400 focus:outline-none focus:border-blue-400 transition-colors dark:border-[#2a2d3a] dark:bg-[#161825] dark:text-slate-200 dark:placeholder-slate-500"
+        className="pl-8 pr-8 py-1.5 rounded-lg text-[13px] transition-colors duration-150 focus:outline-none"
+        style={{
+          background: "var(--bg-card)",
+          border: "1px solid var(--border)",
+          color: "var(--text-primary)",
+          width: "200px",
+        }}
+        onFocus={(e) => (e.currentTarget.style.borderColor = "var(--brand)")}
+        onBlur={(e) => (e.currentTarget.style.borderColor = "var(--border)")}
       />
+      {value && (
+        <button
+          type="button"
+          onClick={() => onChange("")}
+          aria-label="Clear search"
+          className="absolute right-2.5 top-1/2 -translate-y-1/2 transition-colors"
+          style={{ color: "var(--text-tertiary)" }}
+        >
+          <X size={12} />
+        </button>
+      )}
     </div>
   );
 });

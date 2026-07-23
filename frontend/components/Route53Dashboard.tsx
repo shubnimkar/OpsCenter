@@ -5,10 +5,7 @@ import {
   RefreshCw, Globe, Search, ChevronDown, ChevronUp, ChevronsUpDown,
   Copy, Check, X, Lock, Unlock, List,
 } from "lucide-react";
-import {
-  fetchRoute53Zones, fetchRoute53Records,
-  triggerSchedulerPoll,
-} from "@/lib/api";
+import { fetchRoute53Zones, fetchRoute53Records, triggerSchedulerPoll } from "@/lib/api";
 import { useResourceLoad } from "@/lib/useInitialFetch";
 import { Route53Zone, Route53Record } from "@/lib/types";
 import StatCard from "./StatCard";
@@ -22,32 +19,30 @@ import SlideOverDrawer from "./SlideOverDrawer";
 function CopyButton({ text }: { text: string }) {
   const [copied, setCopied] = useState(false);
   return (
-    <button
-      onClick={(e) => { e.stopPropagation(); navigator.clipboard.writeText(text); setCopied(true); setTimeout(() => setCopied(false), 1500); }}
-      className="ml-1.5 transition-opacity text-slate-400 hover:text-slate-600 dark:text-slate-500 dark:hover:text-slate-300"
-    >
-      {copied ? <Check size={12} className="text-emerald-500" /> : <Copy size={12} />}
+    <button onClick={(e) => { e.stopPropagation(); navigator.clipboard.writeText(text); setCopied(true); setTimeout(() => setCopied(false), 1500); }}
+      className="ml-1.5 p-0.5 rounded opacity-0 group-hover/row:opacity-100 transition-opacity duration-150" style={{ color: "var(--text-tertiary)" }}>
+      {copied ? <Check size={11} className="text-emerald-500" /> : <Copy size={11} />}
     </button>
   );
 }
 
-const RECORD_TYPE_COLORS: Record<string, string> = {
-  A:     "bg-blue-100 text-blue-700 dark:bg-blue-950/40 dark:text-blue-300",
-  AAAA:  "bg-indigo-100 text-indigo-700 dark:bg-indigo-950/40 dark:text-indigo-300",
-  CNAME: "bg-violet-100 text-violet-700 dark:bg-violet-950/40 dark:text-violet-300",
-  MX:    "bg-amber-100 text-amber-700 dark:bg-amber-950/40 dark:text-amber-400",
-  TXT:   "bg-emerald-100 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-400",
-  NS:    "bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300",
-  SOA:   "bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-400",
-  SRV:   "bg-pink-100 text-pink-700 dark:bg-pink-950/40 dark:text-pink-300",
-  CAA:   "bg-orange-100 text-orange-700 dark:bg-orange-950/40 dark:text-orange-400",
-  PTR:   "bg-teal-100 text-teal-700 dark:bg-teal-950/40 dark:text-teal-300",
+const RECORD_TYPE_COLORS: Record<string, { bg: string; text: string }> = {
+  A:     { bg: "rgba(37,99,235,0.1)",   text: "#3b82f6" },
+  AAAA:  { bg: "rgba(99,102,241,0.1)",  text: "#6366f1" },
+  CNAME: { bg: "rgba(139,92,246,0.1)",  text: "#8b5cf6" },
+  MX:    { bg: "rgba(245,158,11,0.1)",  text: "#f59e0b" },
+  TXT:   { bg: "rgba(16,185,129,0.1)",  text: "#10b981" },
+  NS:    { bg: "var(--bg-subtle)",       text: "var(--text-secondary)" },
+  SOA:   { bg: "var(--bg-subtle)",       text: "var(--text-tertiary)" },
+  SRV:   { bg: "rgba(236,72,153,0.1)",  text: "#ec4899" },
+  CAA:   { bg: "rgba(249,115,22,0.1)",  text: "#f97316" },
+  PTR:   { bg: "rgba(20,184,166,0.1)",  text: "#14b8a6" },
 };
 
 function RecordTypeBadge({ type }: { type: string }) {
-  const cls = RECORD_TYPE_COLORS[type] ?? "bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-400";
+  const c = RECORD_TYPE_COLORS[type] ?? { bg: "var(--bg-subtle)", text: "var(--text-secondary)" };
   return (
-    <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium font-mono ${cls}`}>
+    <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold font-mono" style={{ background: c.bg, color: c.text }}>
       {type}
     </span>
   );
@@ -55,62 +50,56 @@ function RecordTypeBadge({ type }: { type: string }) {
 
 function ZoneTypeBadge({ isPrivate }: { isPrivate: boolean }) {
   return isPrivate ? (
-    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-amber-100 text-amber-700 dark:bg-amber-950/40 dark:text-amber-400">
-      <Lock size={10} /> Private
+    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-semibold" style={{ background: "rgba(245,158,11,0.1)", color: "#f59e0b" }}>
+      <Lock size={9} />Private
     </span>
   ) : (
-    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-emerald-100 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-400">
-      <Unlock size={10} /> Public
+    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-semibold" style={{ background: "rgba(16,185,129,0.1)", color: "#10b981" }}>
+      <Unlock size={9} />Public
     </span>
   );
 }
 
-// ── DropdownChip ───────────────────────────────────────────────────────────
+// ── Local DropdownChip (same as IAM) ───────────────────────────────────────
 
-interface DropdownChipProps {
+function DropdownChip({ label, allItems, selectedItems, onChange, renderItem }: {
   label: string; allItems: string[]; selectedItems: string[];
   onChange: (items: string[]) => void; renderItem?: (item: string) => React.ReactNode;
-}
-
-function DropdownChip({ label, allItems, selectedItems, onChange, renderItem }: DropdownChipProps) {
+}) {
   const [open, setOpen] = useState(false);
-  const wrapperRef = useRef<HTMLDivElement>(null);
+  const ref = useRef<HTMLDivElement>(null);
   useEffect(() => {
-    const handler = (e: MouseEvent) => {
-      if (wrapperRef.current && !wrapperRef.current.contains(e.target as Node)) setOpen(false);
-    };
-    document.addEventListener("mousedown", handler);
-    return () => document.removeEventListener("mousedown", handler);
+    const h = (e: MouseEvent) => { if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false); };
+    document.addEventListener("mousedown", h);
+    return () => document.removeEventListener("mousedown", h);
   }, []);
-  const allSelected = selectedItems.length === 0 || selectedItems.length === allItems.length;
-  const activeCount = selectedItems.length > 0 && selectedItems.length < allItems.length ? selectedItems.length : null;
-  const toggle = (item: string) => {
-    if (selectedItems.includes(item)) onChange(selectedItems.filter((x) => x !== item));
-    else onChange([...selectedItems, item]);
-  };
+  const allSel = selectedItems.length === 0 || selectedItems.length === allItems.length;
+  const active = selectedItems.length > 0 && selectedItems.length < allItems.length ? selectedItems.length : null;
+  const toggle = (item: string) => onChange(selectedItems.includes(item) ? selectedItems.filter((x) => x !== item) : [...selectedItems, item]);
   return (
-    <div ref={wrapperRef} className="relative">
+    <div ref={ref} className="relative">
       <button type="button" onClick={() => setOpen((o) => !o)}
-        className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-sm font-medium transition-colors
-          ${activeCount !== null
-            ? "border-blue-400 bg-blue-50 text-blue-700 dark:border-blue-500/60 dark:bg-blue-600/15 dark:text-blue-300"
-            : "border-slate-200 bg-white text-slate-600 hover:border-slate-300 hover:bg-slate-50 dark:border-[#2a2d3a] dark:bg-[#161825] dark:text-slate-300 dark:hover:bg-white/5"}`}>
+        className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[13px] font-medium transition-all duration-150"
+        style={{ background: active !== null ? "rgba(37,99,235,0.08)" : "var(--bg-card)", border: `1px solid ${active !== null ? "rgba(59,130,246,0.45)" : "var(--border)"}`, color: active !== null ? "var(--brand)" : "var(--text-secondary)" }}>
         {label}
-        {activeCount !== null && <span className="rounded-full bg-blue-500 text-white text-xs w-4 h-4 flex items-center justify-center leading-none">{activeCount}</span>}
-        <ChevronDown size={14} className={`transition-transform ${open ? "rotate-180" : ""}`} />
+        {active !== null && <span className="inline-flex items-center justify-center w-4 h-4 rounded-full text-[10px] font-bold text-white bg-blue-600">{active}</span>}
+        <ChevronDown size={13} className={`transition-transform ${open ? "rotate-180" : ""}`} />
       </button>
       {open && (
-        <div className="absolute top-full left-0 mt-1.5 z-50 min-w-[180px] rounded-xl border border-slate-200 bg-white shadow-lg dark:border-[#2a2d3a] dark:bg-[#161825]">
-          <div className="flex items-center gap-3 px-3 pt-2 pb-1.5 border-b border-slate-100 dark:border-[#2a2d3a]">
-            <button type="button" onClick={() => onChange([])} className="text-xs text-blue-500 hover:text-blue-700 dark:text-blue-400">Select all</button>
-            <button type="button" onClick={() => onChange([])} className="text-xs text-slate-400 hover:text-slate-600 dark:text-slate-500">Clear</button>
+        <div className="absolute top-full left-0 mt-1.5 z-50 min-w-[180px] rounded-xl overflow-hidden"
+          style={{ background: "var(--bg-card)", border: "1px solid var(--border)", boxShadow: "0 8px 32px rgba(0,0,0,0.14)" }}>
+          <div className="flex items-center gap-3 px-3 pt-2.5 pb-2" style={{ borderBottom: "1px solid var(--border)" }}>
+            <button type="button" onClick={() => onChange([])} className="text-[11px] font-medium text-blue-500">Select all</button>
+            <button type="button" onClick={() => onChange([])} className="text-[11px]" style={{ color: "var(--text-tertiary)" }}>Clear</button>
           </div>
           <ul className="py-1 max-h-56 overflow-y-auto">
             {allItems.map((item) => (
               <li key={item}>
-                <label className="flex items-center gap-2.5 px-3 py-1.5 cursor-pointer hover:bg-slate-50 dark:hover:bg-white/5">
-                  <input type="checkbox" checked={allSelected ? true : selectedItems.includes(item)} onChange={() => toggle(item)} className="accent-blue-500 w-3.5 h-3.5 shrink-0" />
-                  {renderItem ? renderItem(item) : <span className="text-sm text-slate-700 dark:text-slate-200 truncate">{item}</span>}
+                <label className="flex items-center gap-2.5 px-3 py-1.5 cursor-pointer select-none"
+                  onMouseEnter={(e) => ((e.currentTarget as HTMLElement).style.background = "var(--bg-subtle)")}
+                  onMouseLeave={(e) => ((e.currentTarget as HTMLElement).style.background = "transparent")}>
+                  <input type="checkbox" checked={allSel ? true : selectedItems.includes(item)} onChange={() => toggle(item)} className="accent-blue-500 w-3.5 h-3.5 shrink-0" />
+                  {renderItem ? renderItem(item) : <span className="text-[13px]" style={{ color: "var(--text-primary)" }}>{item}</span>}
                 </label>
               </li>
             ))}
@@ -121,70 +110,51 @@ function DropdownChip({ label, allItems, selectedItems, onChange, renderItem }: 
   );
 }
 
-// ── Zone Drawer ────────────────────────────────────────────────────────────
+// ── Drawers ────────────────────────────────────────────────────────────────
+
+function DrawerRow({ label, value }: { label: string; value: React.ReactNode }) {
+  return (
+    <div className="flex justify-between gap-4 py-2.5 border-b last:border-0" style={{ borderColor: "var(--border)" }}>
+      <dt className="text-[13px] shrink-0" style={{ color: "var(--text-tertiary)" }}>{label}</dt>
+      <dd className="text-[13px] text-right break-all" style={{ color: "var(--text-primary)" }}>{value ?? "—"}</dd>
+    </div>
+  );
+}
 
 function ZoneDrawer({ zone, records, onClose }: { zone: Route53Zone | null; records: Route53Record[]; onClose: () => void }) {
   const zoneRecords = zone ? records.filter((r) => r.ZoneId === zone.ZoneId) : [];
   const recordTypes = [...new Set(zoneRecords.map((r) => r.RecordType))].sort();
-
   return (
     <SlideOverDrawer isOpen={!!zone} onClose={onClose} title={zone ? zone.Name : ""}>
       {zone && (
-        <div className="space-y-6 text-sm">
-          <div>
-            <p className="text-xs uppercase tracking-widest text-slate-400 dark:text-slate-500 mb-2">Hosted Zone</p>
-            <dl className="space-y-2">
-              <div className="flex justify-between gap-4">
-                <dt className="text-slate-500 dark:text-slate-400 shrink-0">Name</dt>
-                <dd className="font-mono text-xs text-slate-700 dark:text-slate-200 text-right break-all flex items-center gap-1">{zone.Name}<CopyButton text={zone.Name} /></dd>
-              </div>
-              <div className="flex justify-between gap-4">
-                <dt className="text-slate-500 dark:text-slate-400 shrink-0">Zone ID</dt>
-                <dd className="font-mono text-xs text-slate-600 dark:text-slate-300 text-right flex items-center gap-1">{zone.ZoneId}<CopyButton text={zone.ZoneId} /></dd>
-              </div>
-              <div className="flex justify-between gap-4">
-                <dt className="text-slate-500 dark:text-slate-400 shrink-0">Type</dt>
-                <dd><ZoneTypeBadge isPrivate={zone.PrivateZone} /></dd>
-              </div>
-              <div className="flex justify-between gap-4">
-                <dt className="text-slate-500 dark:text-slate-400 shrink-0">Records</dt>
-                <dd className="text-slate-600 dark:text-slate-300 text-xs">{zone.RecordCount.toLocaleString()}</dd>
-              </div>
-              {zone.Comment && (
-                <div className="flex justify-between gap-4">
-                  <dt className="text-slate-500 dark:text-slate-400 shrink-0">Comment</dt>
-                  <dd className="text-slate-600 dark:text-slate-300 text-xs text-right">{zone.Comment}</dd>
-                </div>
-              )}
-            </dl>
-          </div>
-          <div>
-            <p className="text-xs uppercase tracking-widest text-slate-400 dark:text-slate-500 mb-2">Profile</p>
-            <dl className="space-y-2">
-              <div className="flex justify-between gap-4">
-                <dt className="text-slate-500 dark:text-slate-400 shrink-0">Account</dt>
-                <dd><ProfileBadge profile={zone.Profile} color={zone.ProfileColor} envTag={zone.ProfileEnvTag} /></dd>
-              </div>
-            </dl>
-          </div>
+        <div>
+          <p className="text-[11px] font-semibold uppercase tracking-wider mb-3" style={{ color: "var(--text-tertiary)" }}>Hosted Zone</p>
+          <DrawerRow label="Name" value={<span className="font-mono text-[12px] flex items-center gap-1">{zone.Name}<button onClick={() => navigator.clipboard.writeText(zone.Name)} style={{ color: "var(--text-tertiary)" }}><Copy size={10} /></button></span>} />
+          <DrawerRow label="Zone ID" value={<span className="font-mono text-[12px] flex items-center gap-1">{zone.ZoneId}<button onClick={() => navigator.clipboard.writeText(zone.ZoneId)} style={{ color: "var(--text-tertiary)" }}><Copy size={10} /></button></span>} />
+          <DrawerRow label="Type" value={<ZoneTypeBadge isPrivate={zone.PrivateZone} />} />
+          <DrawerRow label="Records" value={zone.RecordCount.toLocaleString()} />
+          {zone.Comment && <DrawerRow label="Comment" value={zone.Comment} />}
+
+          <p className="text-[11px] font-semibold uppercase tracking-wider mb-3 mt-5" style={{ color: "var(--text-tertiary)" }}>Profile</p>
+          <DrawerRow label="Account" value={<ProfileBadge profile={zone.Profile} color={zone.ProfileColor} envTag={zone.ProfileEnvTag} />} />
+
           {Object.keys(zone.Tags).length > 0 && (
-            <div>
-              <p className="text-xs uppercase tracking-widest text-slate-400 dark:text-slate-500 mb-2">Tags</p>
+            <div className="mt-5">
+              <p className="text-[11px] font-semibold uppercase tracking-wider mb-3" style={{ color: "var(--text-tertiary)" }}>Tags</p>
               <div className="flex flex-wrap gap-1.5">
                 {Object.entries(zone.Tags).map(([k, v]) => (
-                  <span key={k} className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-xs bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300">
+                  <span key={k} className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px]" style={{ background: "var(--bg-subtle)", color: "var(--text-secondary)", border: "1px solid var(--border)" }}>
                     <span className="font-medium">{k}:</span>{v}
                   </span>
                 ))}
               </div>
             </div>
           )}
+
           {recordTypes.length > 0 && (
-            <div>
-              <p className="text-xs uppercase tracking-widest text-slate-400 dark:text-slate-500 mb-2">Record Types</p>
-              <div className="flex flex-wrap gap-1.5">
-                {recordTypes.map((t) => <RecordTypeBadge key={t} type={t} />)}
-              </div>
+            <div className="mt-5">
+              <p className="text-[11px] font-semibold uppercase tracking-wider mb-3" style={{ color: "var(--text-tertiary)" }}>Record Types</p>
+              <div className="flex flex-wrap gap-1.5">{recordTypes.map((t) => <RecordTypeBadge key={t} type={t} />)}</div>
             </div>
           )}
         </div>
@@ -192,83 +162,66 @@ function ZoneDrawer({ zone, records, onClose }: { zone: Route53Zone | null; reco
     </SlideOverDrawer>
   );
 }
-
-// ── Record Drawer ──────────────────────────────────────────────────────────
 
 function RecordDrawer({ record, onClose }: { record: Route53Record | null; onClose: () => void }) {
   return (
     <SlideOverDrawer isOpen={!!record} onClose={onClose} title={record ? `${record.RecordName} — ${record.RecordType}` : ""}>
       {record && (
-        <div className="space-y-6 text-sm">
-          <div>
-            <p className="text-xs uppercase tracking-widest text-slate-400 dark:text-slate-500 mb-2">Record</p>
-            <dl className="space-y-2">
-              <div className="flex justify-between gap-4">
-                <dt className="text-slate-500 dark:text-slate-400 shrink-0">Name</dt>
-                <dd className="font-mono text-xs text-slate-700 dark:text-slate-200 text-right break-all flex items-center gap-1">{record.RecordName}<CopyButton text={record.RecordName} /></dd>
-              </div>
-              <div className="flex justify-between gap-4">
-                <dt className="text-slate-500 dark:text-slate-400 shrink-0">Type</dt>
-                <dd><RecordTypeBadge type={record.RecordType} /></dd>
-              </div>
-              <div className="flex justify-between gap-4">
-                <dt className="text-slate-500 dark:text-slate-400 shrink-0">TTL</dt>
-                <dd className="text-slate-600 dark:text-slate-300 text-xs">{record.AliasTarget ? "Alias (no TTL)" : record.TTL != null ? `${record.TTL}s` : "—"}</dd>
-              </div>
-            </dl>
-          </div>
-          <div>
-            <p className="text-xs uppercase tracking-widest text-slate-400 dark:text-slate-500 mb-2">Values</p>
-            {record.AliasTarget ? (
-              <div className="rounded-lg border border-slate-200 dark:border-[#2a2d3a] p-3 bg-slate-50 dark:bg-[#0f1117]">
-                <p className="text-xs text-slate-400 mb-1">Alias target</p>
-                <p className="font-mono text-xs text-slate-700 dark:text-slate-200 break-all">{record.AliasTarget}</p>
-              </div>
-            ) : (
-              <ul className="space-y-1.5">
-                {record.Values.map((v, i) => (
-                  <li key={i} className="rounded-lg border border-slate-200 dark:border-[#2a2d3a] p-2.5 bg-slate-50 dark:bg-[#0f1117] flex items-start justify-between gap-2">
-                    <span className="font-mono text-xs text-slate-700 dark:text-slate-200 break-all">{v}</span>
-                    <CopyButton text={v} />
-                  </li>
-                ))}
-              </ul>
-            )}
-          </div>
+        <div>
+          <p className="text-[11px] font-semibold uppercase tracking-wider mb-3" style={{ color: "var(--text-tertiary)" }}>Record</p>
+          <DrawerRow label="Name" value={<span className="font-mono text-[12px]">{record.RecordName}</span>} />
+          <DrawerRow label="Type" value={<RecordTypeBadge type={record.RecordType} />} />
+          <DrawerRow label="TTL" value={record.AliasTarget ? "Alias (no TTL)" : record.TTL != null ? `${record.TTL}s` : "—"} />
+
+          <p className="text-[11px] font-semibold uppercase tracking-wider mb-3 mt-5" style={{ color: "var(--text-tertiary)" }}>Values</p>
+          {record.AliasTarget ? (
+            <div className="rounded-xl px-3 py-2.5" style={{ background: "var(--bg-subtle)", border: "1px solid var(--border)" }}>
+              <p className="text-[11px] mb-1" style={{ color: "var(--text-tertiary)" }}>Alias target</p>
+              <p className="font-mono text-[12px] break-all" style={{ color: "var(--text-primary)" }}>{record.AliasTarget}</p>
+            </div>
+          ) : (
+            <ul className="space-y-1.5">
+              {record.Values.map((v, i) => (
+                <li key={i} className="flex items-start justify-between gap-2 rounded-xl px-3 py-2" style={{ background: "var(--bg-subtle)", border: "1px solid var(--border)" }}>
+                  <span className="font-mono text-[12px] break-all" style={{ color: "var(--text-primary)" }}>{v}</span>
+                  <button onClick={() => navigator.clipboard.writeText(v)} className="shrink-0 p-0.5 rounded" style={{ color: "var(--text-tertiary)" }}><Copy size={10} /></button>
+                </li>
+              ))}
+            </ul>
+          )}
+
           {(record.SetIdentifier || record.Weight != null || record.Region || record.Failover) && (
-            <div>
-              <p className="text-xs uppercase tracking-widest text-slate-400 dark:text-slate-500 mb-2">Routing Policy</p>
-              <dl className="space-y-2">
-                {record.SetIdentifier && <div className="flex justify-between gap-4"><dt className="text-slate-500 dark:text-slate-400 shrink-0">Identifier</dt><dd className="text-slate-600 dark:text-slate-300 text-xs">{record.SetIdentifier}</dd></div>}
-                {record.Weight != null && <div className="flex justify-between gap-4"><dt className="text-slate-500 dark:text-slate-400 shrink-0">Weight</dt><dd className="text-slate-600 dark:text-slate-300 text-xs">{record.Weight}</dd></div>}
-                {record.Region && <div className="flex justify-between gap-4"><dt className="text-slate-500 dark:text-slate-400 shrink-0">Region</dt><dd className="font-mono text-xs text-slate-600 dark:text-slate-300">{record.Region}</dd></div>}
-                {record.Failover && <div className="flex justify-between gap-4"><dt className="text-slate-500 dark:text-slate-400 shrink-0">Failover</dt><dd className="text-slate-600 dark:text-slate-300 text-xs">{record.Failover}</dd></div>}
-              </dl>
+            <div className="mt-5">
+              <p className="text-[11px] font-semibold uppercase tracking-wider mb-3" style={{ color: "var(--text-tertiary)" }}>Routing Policy</p>
+              {record.SetIdentifier && <DrawerRow label="Identifier" value={record.SetIdentifier} />}
+              {record.Weight != null && <DrawerRow label="Weight" value={record.Weight} />}
+              {record.Region && <DrawerRow label="Region" value={<span className="font-mono text-[12px]">{record.Region}</span>} />}
+              {record.Failover && <DrawerRow label="Failover" value={record.Failover} />}
             </div>
           )}
-          <div>
-            <p className="text-xs uppercase tracking-widest text-slate-400 dark:text-slate-500 mb-2">Deployment</p>
-            <dl className="space-y-2">
-              <div className="flex justify-between gap-4">
-                <dt className="text-slate-500 dark:text-slate-400 shrink-0">Profile</dt>
-                <dd><ProfileBadge profile={record.Profile} color={record.ProfileColor} envTag={record.ProfileEnvTag} /></dd>
-              </div>
-              <div className="flex justify-between gap-4">
-                <dt className="text-slate-500 dark:text-slate-400 shrink-0">Zone ID</dt>
-                <dd className="font-mono text-xs text-slate-600 dark:text-slate-300">{record.ZoneId}</dd>
-              </div>
-            </dl>
-          </div>
+
+          <p className="text-[11px] font-semibold uppercase tracking-wider mb-3 mt-5" style={{ color: "var(--text-tertiary)" }}>Deployment</p>
+          <DrawerRow label="Profile" value={<ProfileBadge profile={record.Profile} color={record.ProfileColor} envTag={record.ProfileEnvTag} />} />
+          <DrawerRow label="Zone ID" value={<span className="font-mono text-[12px]">{record.ZoneId}</span>} />
         </div>
       )}
     </SlideOverDrawer>
   );
 }
 
-// ── Zones Table ────────────────────────────────────────────────────────────
+// ── Tables ─────────────────────────────────────────────────────────────────
 
-type ZoneSortKey = "Name" | "Profile" | "RecordCount" | "PrivateZone";
 type SortDir = "asc" | "desc";
+type ZoneSortKey = "Name" | "Profile" | "RecordCount" | "PrivateZone";
+type RecordSortKey = "RecordName" | "RecordType" | "Profile" | "TTL";
+
+function TableWrap({ children }: { children: React.ReactNode }) {
+  return (
+    <div className="rounded-xl overflow-hidden border" style={{ background: "var(--bg-card)", borderColor: "var(--border)", boxShadow: "0 1px 3px rgba(0,0,0,0.06)" }}>
+      <div className="overflow-x-auto"><table className="w-full">{children}</table></div>
+    </div>
+  );
+}
 
 function ZonesTable({ zones, loading, onClearFilters, hasActiveFilters, page, pageSize, onRowClick }: {
   zones: Route53Zone[]; loading: boolean; onClearFilters: () => void;
@@ -276,21 +229,20 @@ function ZonesTable({ zones, loading, onClearFilters, hasActiveFilters, page, pa
 }) {
   const [sortKey, setSortKey] = useState<ZoneSortKey>("Name");
   const [sortDir, setSortDir] = useState<SortDir>("asc");
-  const handleSort = (k: ZoneSortKey) => { if (k === sortKey) setSortDir((d) => d === "asc" ? "desc" : "asc"); else { setSortKey(k); setSortDir("asc"); } };
+  const hs = (k: ZoneSortKey) => { if (k === sortKey) setSortDir((d) => d === "asc" ? "desc" : "asc"); else { setSortKey(k); setSortDir("asc"); } };
   const sorted = [...zones].sort((a, b) => {
     const av = a[sortKey] ?? ""; const bv = b[sortKey] ?? "";
-    if (typeof av === "number") { const cmp = (av as number) - (bv as number); return sortDir === "asc" ? cmp : -cmp; }
-    if (typeof av === "boolean") { const cmp = Number(av) - Number(bv as boolean); return sortDir === "asc" ? cmp : -cmp; }
-    const cmp = String(av).localeCompare(String(bv)); return sortDir === "asc" ? cmp : -cmp;
+    if (typeof av === "number") { return sortDir === "asc" ? (av - (bv as number)) : ((bv as number) - av); }
+    if (typeof av === "boolean") { return sortDir === "asc" ? Number(av) - Number(bv as boolean) : Number(bv as boolean) - Number(av); }
+    return sortDir === "asc" ? String(av).localeCompare(String(bv)) : String(bv).localeCompare(String(av));
   });
   const paginated = sorted.slice((page - 1) * pageSize, page * pageSize);
-  const SortIcon = ({ col }: { col: ZoneSortKey }) => col !== sortKey ? <ChevronsUpDown size={13} className="text-slate-300 dark:text-slate-600" /> : sortDir === "asc" ? <ChevronUp size={13} className="text-blue-500" /> : <ChevronDown size={13} className="text-blue-500" />;
+  const SI = ({ col }: { col: ZoneSortKey }) => col !== sortKey ? <ChevronsUpDown size={12} style={{ color: "var(--text-tertiary)" }} /> : sortDir === "asc" ? <ChevronUp size={12} style={{ color: "var(--brand)" }} /> : <ChevronDown size={12} style={{ color: "var(--brand)" }} />;
 
   if (!loading && sorted.length === 0) return (
-    <div className="flex flex-col items-center justify-center py-20 text-slate-400">
-      <p className="text-lg font-medium text-slate-600 dark:text-slate-300">{hasActiveFilters ? "No zones match the current filters." : "No hosted zones found"}</p>
-      {hasActiveFilters ? <button onClick={onClearFilters} className="mt-3 px-4 py-2 rounded-lg text-sm font-medium bg-slate-100 hover:bg-slate-200 text-slate-600 dark:bg-[#2a2d3a] dark:hover:bg-[#33374a] dark:text-slate-300 transition-colors">Clear filters</button>
-        : <p className="text-xs mt-1">No Route 53 zones cached yet — click Refresh to poll AWS</p>}
+    <div className="flex flex-col items-center justify-center py-20 rounded-xl border gap-3" style={{ background: "var(--bg-card)", borderColor: "var(--border)" }}>
+      <p className="text-[14px] font-medium" style={{ color: "var(--text-secondary)" }}>{hasActiveFilters ? "No zones match." : "No hosted zones found"}</p>
+      {hasActiveFilters && <button onClick={onClearFilters} className="px-4 py-1.5 rounded-lg text-[13px]" style={{ background: "var(--bg-subtle)", color: "var(--text-secondary)", border: "1px solid var(--border)" }}>Clear filters</button>}
     </div>
   );
 
@@ -300,42 +252,43 @@ function ZonesTable({ zones, loading, onClearFilters, hasActiveFilters, page, pa
   ];
 
   return (
-    <div className="rounded-xl border border-slate-200 shadow-sm dark:border-[#2a2d3a] overflow-hidden">
-      <div className="overflow-x-auto">
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="border-b border-slate-200 bg-slate-50 dark:border-[#2a2d3a] dark:bg-[#161825]">
-              {COLS.map((col) => (
-                <th key={col.key} onClick={() => handleSort(col.key)} className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-slate-400 cursor-pointer hover:text-slate-600 select-none whitespace-nowrap dark:text-slate-500 dark:hover:text-slate-300">
-                  <span className="inline-flex items-center gap-1">{col.label}<SortIcon col={col.key} /></span>
-                </th>
-              ))}
-              <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-slate-400 select-none whitespace-nowrap dark:text-slate-500">Comment</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-slate-100 dark:divide-[#2a2d3a]">
-            {loading ? Array.from({ length: 5 }, (_, i) => <SkeletonRow key={i} columns={5} />) : paginated.map((z) => (
-              <tr key={`${z.Profile}:${z.ZoneId}`} onClick={() => onRowClick(z)} className="bg-white hover:bg-slate-50 transition-colors dark:bg-[#1c1f2e] dark:hover:bg-[#222538] cursor-pointer">
-                <td className="px-4 py-3 font-mono text-xs text-slate-700 dark:text-slate-200 max-w-[280px]">
-                  <div className="flex items-center min-w-0"><span className="truncate" title={z.Name}>{z.Name}</span><span className="shrink-0"><CopyButton text={z.Name} /></span></div>
-                  <p className="text-slate-400 dark:text-slate-500 font-sans text-xs mt-0.5">{z.ZoneId}</p>
-                </td>
-                <td className="px-4 py-3 whitespace-nowrap"><ProfileBadge profile={z.Profile} color={z.ProfileColor} envTag={z.ProfileEnvTag} /></td>
-                <td className="px-4 py-3 whitespace-nowrap"><ZoneTypeBadge isPrivate={z.PrivateZone} /></td>
-                <td className="px-4 py-3 text-slate-600 dark:text-slate-300 text-xs tabular-nums">{z.RecordCount.toLocaleString()}</td>
-                <td className="px-4 py-3 text-slate-400 dark:text-slate-500 text-xs max-w-[200px] truncate">{z.Comment || "—"}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-    </div>
+    <TableWrap>
+      <thead>
+        <tr className="border-b" style={{ background: "var(--bg-subtle)", borderColor: "var(--border)" }}>
+          {COLS.map((col) => (
+            <th key={col.key} onClick={() => hs(col.key)} className="px-4 py-3 text-left select-none cursor-pointer whitespace-nowrap">
+              <span className="inline-flex items-center gap-1 text-[11px] font-semibold uppercase tracking-wider" style={{ color: sortKey === col.key ? "var(--brand)" : "var(--text-tertiary)" }}>
+                {col.label}<SI col={col.key} />
+              </span>
+            </th>
+          ))}
+          <th className="px-4 py-3 text-left text-[11px] font-semibold uppercase tracking-wider" style={{ color: "var(--text-tertiary)" }}>Comment</th>
+        </tr>
+      </thead>
+      <tbody>
+        {loading ? Array.from({ length: 5 }, (_, i) => <SkeletonRow key={i} columns={5} />) : paginated.map((z) => (
+          <tr key={`${z.Profile}:${z.ZoneId}`} onClick={() => onRowClick(z)}
+            className="group/row border-b table-row-hover cursor-pointer"
+            style={{ background: "var(--bg-card)", borderColor: "var(--border)" }}
+            onMouseEnter={(e) => ((e.currentTarget as HTMLElement).style.background = "var(--bg-subtle)")}
+            onMouseLeave={(e) => ((e.currentTarget as HTMLElement).style.background = "var(--bg-card)")}>
+            <td className="px-4 py-3 max-w-[280px]">
+              <div className="flex items-center min-w-0">
+                <span className="truncate font-mono text-[13px] font-medium" title={z.Name} style={{ color: "var(--text-primary)" }}>{z.Name}</span>
+                <CopyButton text={z.Name} />
+              </div>
+              <p className="text-[11px] mt-0.5" style={{ color: "var(--text-tertiary)" }}>{z.ZoneId}</p>
+            </td>
+            <td className="px-4 py-3 whitespace-nowrap"><ProfileBadge profile={z.Profile} color={z.ProfileColor} envTag={z.ProfileEnvTag} /></td>
+            <td className="px-4 py-3 whitespace-nowrap"><ZoneTypeBadge isPrivate={z.PrivateZone} /></td>
+            <td className="px-4 py-3 whitespace-nowrap text-[13px] tabular-nums" style={{ color: "var(--text-secondary)" }}>{z.RecordCount.toLocaleString()}</td>
+            <td className="px-4 py-3 max-w-[200px] truncate text-[13px]" style={{ color: "var(--text-tertiary)" }}>{z.Comment || "—"}</td>
+          </tr>
+        ))}
+      </tbody>
+    </TableWrap>
   );
 }
-
-// ── Records Table ──────────────────────────────────────────────────────────
-
-type RecordSortKey = "RecordName" | "RecordType" | "Profile" | "TTL";
 
 function RecordsTable({ records, loading, onClearFilters, hasActiveFilters, page, pageSize, onRowClick }: {
   records: Route53Record[]; loading: boolean; onClearFilters: () => void;
@@ -343,19 +296,19 @@ function RecordsTable({ records, loading, onClearFilters, hasActiveFilters, page
 }) {
   const [sortKey, setSortKey] = useState<RecordSortKey>("RecordName");
   const [sortDir, setSortDir] = useState<SortDir>("asc");
-  const handleSort = (k: RecordSortKey) => { if (k === sortKey) setSortDir((d) => d === "asc" ? "desc" : "asc"); else { setSortKey(k); setSortDir("asc"); } };
+  const hs = (k: RecordSortKey) => { if (k === sortKey) setSortDir((d) => d === "asc" ? "desc" : "asc"); else { setSortKey(k); setSortDir("asc"); } };
   const sorted = [...records].sort((a, b) => {
     const av = a[sortKey] ?? ""; const bv = b[sortKey] ?? "";
-    if (sortKey === "TTL") { const cmp = (Number(av) || 0) - (Number(bv) || 0); return sortDir === "asc" ? cmp : -cmp; }
-    const cmp = String(av).localeCompare(String(bv)); return sortDir === "asc" ? cmp : -cmp;
+    if (sortKey === "TTL") { return sortDir === "asc" ? (Number(av) || 0) - (Number(bv) || 0) : (Number(bv) || 0) - (Number(av) || 0); }
+    return sortDir === "asc" ? String(av).localeCompare(String(bv)) : String(bv).localeCompare(String(av));
   });
   const paginated = sorted.slice((page - 1) * pageSize, page * pageSize);
-  const SortIcon = ({ col }: { col: RecordSortKey }) => col !== sortKey ? <ChevronsUpDown size={13} className="text-slate-300 dark:text-slate-600" /> : sortDir === "asc" ? <ChevronUp size={13} className="text-blue-500" /> : <ChevronDown size={13} className="text-blue-500" />;
+  const SI = ({ col }: { col: RecordSortKey }) => col !== sortKey ? <ChevronsUpDown size={12} style={{ color: "var(--text-tertiary)" }} /> : sortDir === "asc" ? <ChevronUp size={12} style={{ color: "var(--brand)" }} /> : <ChevronDown size={12} style={{ color: "var(--brand)" }} />;
 
   if (!loading && sorted.length === 0) return (
-    <div className="flex flex-col items-center justify-center py-20 text-slate-400">
-      <p className="text-lg font-medium text-slate-600 dark:text-slate-300">{hasActiveFilters ? "No records match the current filters." : "No DNS records found"}</p>
-      {hasActiveFilters && <button onClick={onClearFilters} className="mt-3 px-4 py-2 rounded-lg text-sm font-medium bg-slate-100 hover:bg-slate-200 text-slate-600 dark:bg-[#2a2d3a] dark:hover:bg-[#33374a] dark:text-slate-300 transition-colors">Clear filters</button>}
+    <div className="flex flex-col items-center justify-center py-20 rounded-xl border gap-3" style={{ background: "var(--bg-card)", borderColor: "var(--border)" }}>
+      <p className="text-[14px] font-medium" style={{ color: "var(--text-secondary)" }}>{hasActiveFilters ? "No records match." : "No DNS records found"}</p>
+      {hasActiveFilters && <button onClick={onClearFilters} className="px-4 py-1.5 rounded-lg text-[13px]" style={{ background: "var(--bg-subtle)", color: "var(--text-secondary)", border: "1px solid var(--border)" }}>Clear filters</button>}
     </div>
   );
 
@@ -365,52 +318,56 @@ function RecordsTable({ records, loading, onClearFilters, hasActiveFilters, page
   ];
 
   return (
-    <div className="rounded-xl border border-slate-200 shadow-sm dark:border-[#2a2d3a] overflow-hidden">
-      <div className="overflow-x-auto">
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="border-b border-slate-200 bg-slate-50 dark:border-[#2a2d3a] dark:bg-[#161825]">
-              {COLS.map((col) => (
-                <th key={col.key} onClick={() => handleSort(col.key)} className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-slate-400 cursor-pointer hover:text-slate-600 select-none whitespace-nowrap dark:text-slate-500 dark:hover:text-slate-300">
-                  <span className="inline-flex items-center gap-1">{col.label}<SortIcon col={col.key} /></span>
-                </th>
-              ))}
-              <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-slate-400 select-none whitespace-nowrap dark:text-slate-500">Value(s)</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-slate-100 dark:divide-[#2a2d3a]">
-            {loading ? Array.from({ length: 5 }, (_, i) => <SkeletonRow key={i} columns={5} />) : paginated.map((r, idx) => (
-              <tr key={`${r.Profile}:${r.ZoneId}:${r.RecordName}:${r.RecordType}:${r.SetIdentifier}:${idx}`}
-                onClick={() => onRowClick(r)} className="bg-white hover:bg-slate-50 transition-colors dark:bg-[#1c1f2e] dark:hover:bg-[#222538] cursor-pointer">
-                <td className="px-4 py-3 font-mono text-xs text-slate-700 dark:text-slate-200 max-w-[240px]">
-                  <div className="flex items-center min-w-0"><span className="truncate" title={r.RecordName}>{r.RecordName}</span><span className="shrink-0"><CopyButton text={r.RecordName} /></span></div>
-                  {r.ZoneId && <p className="text-slate-400 dark:text-slate-500 font-sans text-xs mt-0.5">{r.ZoneId}</p>}
-                </td>
-                <td className="px-4 py-3 whitespace-nowrap"><RecordTypeBadge type={r.RecordType} /></td>
-                <td className="px-4 py-3 whitespace-nowrap"><ProfileBadge profile={r.Profile} color={r.ProfileColor} envTag={r.ProfileEnvTag} /></td>
-                <td className="px-4 py-3 text-slate-500 dark:text-slate-400 text-xs whitespace-nowrap">
-                  {r.AliasTarget ? <span className="italic text-slate-400">Alias</span> : r.TTL != null ? `${r.TTL}s` : "—"}
-                </td>
-                <td className="px-4 py-3 max-w-[280px]">
-                  {r.AliasTarget ? (
-                    <span className="font-mono text-xs text-slate-600 dark:text-slate-300 truncate block" title={r.AliasTarget}>{r.AliasTarget}</span>
-                  ) : (
-                    <div className="flex flex-col gap-0.5">
-                      {r.Values.slice(0, 2).map((v, i) => <span key={i} className="font-mono text-xs text-slate-600 dark:text-slate-300 truncate" title={v}>{v}</span>)}
-                      {r.Values.length > 2 && <span className="text-xs text-slate-400">+{r.Values.length - 2} more</span>}
-                    </div>
-                  )}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-    </div>
+    <TableWrap>
+      <thead>
+        <tr className="border-b" style={{ background: "var(--bg-subtle)", borderColor: "var(--border)" }}>
+          {COLS.map((col) => (
+            <th key={col.key} onClick={() => hs(col.key)} className="px-4 py-3 text-left select-none cursor-pointer whitespace-nowrap">
+              <span className="inline-flex items-center gap-1 text-[11px] font-semibold uppercase tracking-wider" style={{ color: sortKey === col.key ? "var(--brand)" : "var(--text-tertiary)" }}>
+                {col.label}<SI col={col.key} />
+              </span>
+            </th>
+          ))}
+          <th className="px-4 py-3 text-left text-[11px] font-semibold uppercase tracking-wider" style={{ color: "var(--text-tertiary)" }}>Value(s)</th>
+        </tr>
+      </thead>
+      <tbody>
+        {loading ? Array.from({ length: 5 }, (_, i) => <SkeletonRow key={i} columns={5} />) : paginated.map((r, idx) => (
+          <tr key={`${r.Profile}:${r.ZoneId}:${r.RecordName}:${r.RecordType}:${idx}`} onClick={() => onRowClick(r)}
+            className="group/row border-b table-row-hover cursor-pointer"
+            style={{ background: "var(--bg-card)", borderColor: "var(--border)" }}
+            onMouseEnter={(e) => ((e.currentTarget as HTMLElement).style.background = "var(--bg-subtle)")}
+            onMouseLeave={(e) => ((e.currentTarget as HTMLElement).style.background = "var(--bg-card)")}>
+            <td className="px-4 py-3 max-w-[240px]">
+              <div className="flex items-center min-w-0">
+                <span className="truncate font-mono text-[13px] font-medium" title={r.RecordName} style={{ color: "var(--text-primary)" }}>{r.RecordName}</span>
+                <CopyButton text={r.RecordName} />
+              </div>
+              {r.ZoneId && <p className="text-[11px] mt-0.5" style={{ color: "var(--text-tertiary)" }}>{r.ZoneId}</p>}
+            </td>
+            <td className="px-4 py-3 whitespace-nowrap"><RecordTypeBadge type={r.RecordType} /></td>
+            <td className="px-4 py-3 whitespace-nowrap"><ProfileBadge profile={r.Profile} color={r.ProfileColor} envTag={r.ProfileEnvTag} /></td>
+            <td className="px-4 py-3 whitespace-nowrap text-[13px]" style={{ color: "var(--text-secondary)" }}>
+              {r.AliasTarget ? <span className="italic text-[12px]" style={{ color: "var(--text-tertiary)" }}>Alias</span> : r.TTL != null ? `${r.TTL}s` : "—"}
+            </td>
+            <td className="px-4 py-3 max-w-[280px]">
+              {r.AliasTarget ? (
+                <span className="font-mono text-[12px] truncate block" title={r.AliasTarget} style={{ color: "var(--text-secondary)" }}>{r.AliasTarget}</span>
+              ) : (
+                <div className="flex flex-col gap-0.5">
+                  {r.Values.slice(0, 2).map((v, i) => <span key={i} className="font-mono text-[12px] truncate" title={v} style={{ color: "var(--text-secondary)" }}>{v}</span>)}
+                  {r.Values.length > 2 && <span className="text-[11px]" style={{ color: "var(--text-tertiary)" }}>+{r.Values.length - 2} more</span>}
+                </div>
+              )}
+            </td>
+          </tr>
+        ))}
+      </tbody>
+    </TableWrap>
   );
 }
 
-// ── Route53Dashboard ───────────────────────────────────────────────────────
+// ── Main ────────────────────────────────────────────────────────────────────
 
 type TabId = "zones" | "records";
 
@@ -419,203 +376,133 @@ export default function Route53Dashboard() {
   const [records, setRecords] = useState<Route53Record[]>([]);
   const [activeTab, setActiveTab] = useState<TabId>("zones");
 
-  const beforeRefresh = useCallback(async () => {
-    await triggerSchedulerPoll();
-    await new Promise((r) => setTimeout(r, 2000));
-  }, []);
+  const beforeRefresh = useCallback(async () => { await triggerSchedulerPoll(); await new Promise((r) => setTimeout(r, 2000)); }, []);
+  const fetchAll = useCallback(() => Promise.all([fetchRoute53Zones(), fetchRoute53Records()]), []);
+  const onData = useCallback(([z, r]: [Route53Zone[], Route53Record[]]) => { setZones(z); setRecords(r); }, []);
+  const { loading, error, lastUpdated, refreshing, load } = useResourceLoad({ fetcher: fetchAll, onData, beforeRefresh });
 
-  const fetchRoute53Data = useCallback(
-    () => Promise.all([fetchRoute53Zones(), fetchRoute53Records()]),
-    [],
+  const [zoneSearch, setZoneSearch] = useState(""); const [selZoneProfiles, setSelZoneProfiles] = useState<string[]>([]); const [selZoneTypes, setSelZoneTypes] = useState<string[]>(["Public", "Private"]);
+  const [recordSearch, setRecordSearch] = useState(""); const [selRecordProfiles, setSelRecordProfiles] = useState<string[]>([]); const [selRecordTypes, setSelRecordTypes] = useState<string[]>([]);
+  const [zonePage, setZonePage] = useState(1); const [zonePageSize, setZonePageSize] = useState<PageSize>(10);
+  const [recordPage, setRecordPage] = useState(1); const [recordPageSize, setRecordPageSize] = useState<PageSize>(10);
+  const [selZone, setSelZone] = useState<Route53Zone | null>(null);
+  const [selRecord, setSelRecord] = useState<Route53Record | null>(null);
+
+  const allZoneProfiles   = [...new Set(zones.map((z) => z.Profile))].sort();
+  const allRecordProfiles = [...new Set(records.map((r) => r.Profile))].sort();
+  const allRecordTypes    = [...new Set(records.map((r) => r.RecordType))].sort();
+  const profileColorMap   = Object.fromEntries([...zones, ...records].map((x) => [x.Profile, x.ProfileColor]));
+
+  const filteredZones = zones.filter((z) => {
+    const mp = selZoneProfiles.length === 0 || selZoneProfiles.includes(z.Profile);
+    const mt = selZoneTypes.includes(z.PrivateZone ? "Private" : "Public");
+    const ms = !zoneSearch || z.Name.toLowerCase().includes(zoneSearch.toLowerCase()) || z.ZoneId.toLowerCase().includes(zoneSearch.toLowerCase());
+    return mp && mt && ms;
+  });
+  const filteredRecords = records.filter((r) => {
+    const mp = selRecordProfiles.length === 0 || selRecordProfiles.includes(r.Profile);
+    const mt = selRecordTypes.length === 0 || selRecordTypes.includes(r.RecordType);
+    const ms = !recordSearch || r.RecordName.toLowerCase().includes(recordSearch.toLowerCase()) || r.Values.some((v) => v.toLowerCase().includes(recordSearch.toLowerCase()));
+    return mp && mt && ms;
+  });
+
+  const hasActiveZoneFilters   = zoneSearch.trim() !== "" || (selZoneProfiles.length > 0 && selZoneProfiles.length < allZoneProfiles.length) || selZoneTypes.length < 2;
+  const hasActiveRecordFilters = recordSearch.trim() !== "" || (selRecordProfiles.length > 0 && selRecordProfiles.length < allRecordProfiles.length) || (selRecordTypes.length > 0 && selRecordTypes.length < allRecordTypes.length);
+
+  const clearZoneFilters   = () => { setZoneSearch(""); setSelZoneProfiles([]); setSelZoneTypes(["Public", "Private"]); setZonePage(1); };
+  const clearRecordFilters = () => { setRecordSearch(""); setSelRecordProfiles([]); setSelRecordTypes([]); setRecordPage(1); };
+
+  const ProfileChip = ({ allP, selP, onChange }: { allP: string[]; selP: string[]; onChange: (v: string[]) => void }) => (
+    <DropdownChip label="Profile" allItems={allP} selectedItems={selP} onChange={onChange}
+      renderItem={(name) => (
+        <span className="flex items-center gap-1.5 text-[13px]" style={{ color: "var(--text-primary)" }}>
+          <span className="inline-block w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: profileColorMap[name] ?? "#6366f1" }} />{name}
+        </span>
+      )} />
   );
 
-  const onRoute53Data = useCallback(([z, r]: [Route53Zone[], Route53Record[]]) => {
-    setZones(z);
-    setRecords(r);
-  }, []);
-
-  const { loading, error, lastUpdated, refreshing, load } = useResourceLoad({
-    fetcher: fetchRoute53Data,
-    onData: onRoute53Data,
-    beforeRefresh,
-  });
-
-  // Zone filters
-  const [zoneSearch, setZoneSearch] = useState("");
-  const [selectedZoneProfiles, setSelectedZoneProfiles] = useState<string[]>([]);
-  const [selectedZoneTypes, setSelectedZoneTypes] = useState<string[]>(["Public", "Private"]);
-
-  // Record filters
-  const [recordSearch, setRecordSearch] = useState("");
-  const [selectedRecordProfiles, setSelectedRecordProfiles] = useState<string[]>([]);
-  const [selectedRecordTypes, setSelectedRecordTypes] = useState<string[]>([]);
-
-  // Pagination
-  const [zonePage, setZonePage] = useState(1);
-  const [zonePageSize, setZonePageSize] = useState<PageSize>(10);
-  const [recordPage, setRecordPage] = useState(1);
-  const [recordPageSize, setRecordPageSize] = useState<PageSize>(10);
-
-  // Drawers
-  const [selectedZone, setSelectedZone] = useState<Route53Zone | null>(null);
-  const [selectedRecord, setSelectedRecord] = useState<Route53Record | null>(null);
-
-  // Derived
-  const allZoneProfiles = [...new Set(zones.map((z) => z.Profile))].sort();
-  const allRecordProfiles = [...new Set(records.map((r) => r.Profile))].sort();
-  const allRecordTypes = [...new Set(records.map((r) => r.RecordType))].sort();
-  const profileColorMap = Object.fromEntries([...zones, ...records].map((x) => [x.Profile, x.ProfileColor]));
-
-  const totalZones = zones.length;
-  const publicZones = zones.filter((z) => !z.PrivateZone).length;
-  const privateZones = zones.filter((z) => z.PrivateZone).length;
-  const totalRecords = records.length;
-
-  // Zone filtering
-  const filteredZones = zones.filter((z) => {
-    const matchProfile = selectedZoneProfiles.length === 0 || selectedZoneProfiles.includes(z.Profile);
-    const matchType = selectedZoneTypes.includes(z.PrivateZone ? "Private" : "Public");
-    const matchSearch = !zoneSearch || z.Name.toLowerCase().includes(zoneSearch.toLowerCase()) || z.ZoneId.toLowerCase().includes(zoneSearch.toLowerCase());
-    return matchProfile && matchType && matchSearch;
-  });
-
-  const hasActiveZoneFilters = zoneSearch.trim() !== "" ||
-    (selectedZoneProfiles.length > 0 && selectedZoneProfiles.length < allZoneProfiles.length) ||
-    selectedZoneTypes.length < 2;
-
-  // Record filtering
-  const filteredRecords = records.filter((r) => {
-    const matchProfile = selectedRecordProfiles.length === 0 || selectedRecordProfiles.includes(r.Profile);
-    const matchType = selectedRecordTypes.length === 0 || selectedRecordTypes.includes(r.RecordType);
-    const matchSearch = !recordSearch || r.RecordName.toLowerCase().includes(recordSearch.toLowerCase()) ||
-      r.Values.some((v) => v.toLowerCase().includes(recordSearch.toLowerCase()));
-    return matchProfile && matchType && matchSearch;
-  });
-
-  const hasActiveRecordFilters = recordSearch.trim() !== "" ||
-    (selectedRecordProfiles.length > 0 && selectedRecordProfiles.length < allRecordProfiles.length) ||
-    (selectedRecordTypes.length > 0 && selectedRecordTypes.length < allRecordTypes.length);
-
-  const clearZoneFilters = () => {
-    setZoneSearch(""); setSelectedZoneProfiles([...new Set(zones.map((z) => z.Profile))]); setSelectedZoneTypes(["Public", "Private"]); setZonePage(1);
-  };
-  const clearRecordFilters = () => {
-    setRecordSearch(""); setSelectedRecordProfiles([...new Set(records.map((r) => r.Profile))]); setSelectedRecordTypes([...new Set(records.map((r) => r.RecordType))]); setRecordPage(1);
-  };
-
   return (
-    <div className="p-6 overflow-auto bg-slate-100 dark:bg-[#0f1117] min-h-full">
-      {/* Header */}
+    <div className="p-6 min-h-full" style={{ background: "var(--bg-page)" }}>
       <div className="flex items-center justify-between mb-6">
         <div>
-          <h2 className="text-lg font-semibold text-slate-900 dark:text-white">Route 53</h2>
-          {lastUpdated && (
-            <p className="text-xs text-slate-400 mt-0.5">Synced {lastUpdated.toLocaleTimeString()}</p>
-          )}
+          <h1 className="text-[20px] font-bold tracking-tight" style={{ color: "var(--text-primary)" }}>Route 53</h1>
+          {lastUpdated && <p className="text-[13px] mt-0.5" style={{ color: "var(--text-tertiary)" }}>Synced {lastUpdated.toLocaleTimeString()}</p>}
         </div>
-        <button onClick={() => load(true)} disabled={refreshing}
-          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium border border-slate-200 bg-white text-slate-600 hover:bg-slate-50 disabled:opacity-50 transition-colors dark:border-[#2a2d3a] dark:bg-[#161825] dark:text-slate-300 dark:hover:bg-white/5">
-          <RefreshCw size={14} className={refreshing ? "animate-spin" : ""} />
-          {refreshing ? "Polling AWS…" : "Refresh"}
+        <button onClick={() => load(true)} disabled={refreshing} className="flex items-center gap-2 px-3 py-2 rounded-lg text-[13px] font-medium transition-colors duration-150 disabled:opacity-50" style={{ background: "var(--bg-card)", border: "1px solid var(--border)", color: "var(--text-secondary)" }}>
+          <RefreshCw size={14} className={refreshing ? "animate-spin" : ""} />{refreshing ? "Polling AWS…" : "Refresh"}
         </button>
       </div>
 
-      {/* Stat cards */}
       <div className="grid grid-cols-4 gap-4 mb-6">
-        <StatCard label="Hosted Zones" value={loading ? 0 : totalZones} total={totalZones} color="blue" icon={<Globe size={20} />} />
-        <StatCard label="Public Zones" value={loading ? 0 : publicZones} total={totalZones} color="green" icon={<Unlock size={20} />} />
-        <StatCard label="Private Zones" value={loading ? 0 : privateZones} total={totalZones} color="purple" icon={<Lock size={20} />} />
-        <StatCard label="DNS Records" value={loading ? 0 : totalRecords} total={totalRecords} color="red" icon={<List size={20} />} />
+        <StatCard label="Hosted Zones"  value={loading ? 0 : zones.length}                         color="blue"   icon={<Globe size={18} />} />
+        <StatCard label="Public Zones"  value={loading ? 0 : zones.filter((z) => !z.PrivateZone).length} color="green" icon={<Unlock size={18} />} />
+        <StatCard label="Private Zones" value={loading ? 0 : zones.filter((z) => z.PrivateZone).length}  color="purple" icon={<Lock size={18} />} />
+        <StatCard label="DNS Records"   value={loading ? 0 : records.length}                        color="amber"  icon={<List size={18} />} />
       </div>
 
       {error && (
-        <div className="mb-4 p-3 rounded-lg border border-red-200 bg-red-50 text-red-700 text-sm dark:border-red-800/40 dark:bg-red-950/20 dark:text-red-400">
-          {error}
+        <div className="rounded-xl border p-4 mb-4" style={{ background: "rgba(239,68,68,0.05)", borderColor: "rgba(239,68,68,0.2)" }}>
+          <p className="text-[13px]" style={{ color: "#ef4444" }}>{error}</p>
         </div>
       )}
 
-      {/* Tabs */}
-      <div className="flex items-center gap-1 mb-4 border-b border-slate-200 dark:border-[#2a2d3a]">
-        {([["zones", "Hosted Zones"], ["records", "DNS Records"]] as [TabId, string][]).map(([id, label]) => (
-          <button key={id} onClick={() => setActiveTab(id)}
-            className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${activeTab === id ? "border-blue-500 text-slate-900 dark:text-white" : "border-transparent text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200"}`}>
-            {label}
-          </button>
-        ))}
+      <div className="mb-4 border-b" style={{ borderColor: "var(--border)" }}>
+        <nav className="flex items-center -mb-px">
+          {(["zones", "records"] as TabId[]).map((tab) => (
+            <button key={tab} onClick={() => setActiveTab(tab)}
+              className={`px-4 py-2.5 text-[13px] font-medium transition-colors duration-150 border-b-2 ${activeTab === tab ? "border-blue-500" : "border-transparent"}`}
+              style={{ color: activeTab === tab ? "var(--brand)" : "var(--text-secondary)" }}>
+              {tab === "zones" ? "Hosted Zones" : "DNS Records"}
+            </button>
+          ))}
+        </nav>
       </div>
 
-      {/* Zones tab */}
       {activeTab === "zones" && (
         <>
           <div className="flex items-center gap-2 flex-wrap mb-4">
             <div className="relative">
-              <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 dark:text-slate-500 pointer-events-none" />
+              <Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" style={{ color: "var(--text-tertiary)" }} />
               <input type="text" placeholder="Search zones…" value={zoneSearch} onChange={(e) => { setZoneSearch(e.target.value); setZonePage(1); }}
-                className="pl-8 pr-3 py-1.5 rounded-lg border border-slate-200 bg-white text-sm text-slate-700 placeholder-slate-400 focus:outline-none focus:border-blue-400 transition-colors dark:border-[#2a2d3a] dark:bg-[#161825] dark:text-slate-200 dark:placeholder-slate-500" />
+                className="pl-8 pr-3 py-1.5 rounded-lg text-[13px] focus:outline-none" style={{ background: "var(--bg-card)", border: "1px solid var(--border)", color: "var(--text-primary)", width: 200 }}
+                onFocus={(e) => (e.currentTarget.style.borderColor = "var(--brand)")} onBlur={(e) => (e.currentTarget.style.borderColor = "var(--border)")} />
             </div>
-            <DropdownChip label="Profile" allItems={allZoneProfiles} selectedItems={selectedZoneProfiles}
-              onChange={(v) => { setSelectedZoneProfiles(v); setZonePage(1); }}
-              renderItem={(name) => <span className="flex items-center gap-1.5 text-sm text-slate-700 dark:text-slate-200 truncate"><span className="inline-block w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: profileColorMap[name] ?? "#6366f1" }} />{name}</span>} />
-            <DropdownChip label="Type" allItems={["Public", "Private"]} selectedItems={selectedZoneTypes}
-              onChange={(v) => { setSelectedZoneTypes(v); setZonePage(1); }} />
-            {hasActiveZoneFilters && (
-              <button type="button" onClick={clearZoneFilters} className="flex items-center gap-1 text-xs text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200 transition-colors">
-                <X size={12} />Clear filters
-              </button>
-            )}
+            <ProfileChip allP={allZoneProfiles} selP={selZoneProfiles} onChange={(v) => { setSelZoneProfiles(v); setZonePage(1); }} />
+            <DropdownChip label="Type" allItems={["Public", "Private"]} selectedItems={selZoneTypes} onChange={(v) => { setSelZoneTypes(v); setZonePage(1); }} />
+            {hasActiveZoneFilters && <button onClick={clearZoneFilters} className="flex items-center gap-1 text-[12px]" style={{ color: "var(--text-tertiary)" }}><X size={12} />Clear</button>}
             <div className="ml-auto flex items-center gap-3">
-              <span className="text-xs text-slate-400 dark:text-slate-500 whitespace-nowrap">
-                {filteredZones.length} of {totalZones} zone{totalZones !== 1 ? "s" : ""}
-              </span>
-              {totalZones > 0 && (
-                <Pagination total={filteredZones.length} page={zonePage} pageSize={zonePageSize}
-                  onPageChange={setZonePage} onPageSizeChange={(s) => { setZonePageSize(s); setZonePage(1); }} />
-              )}
+              <span className="text-[12px]" style={{ color: "var(--text-tertiary)" }}>{filteredZones.length} of {zones.length} zones</span>
+              {zones.length > 0 && <Pagination total={filteredZones.length} page={zonePage} pageSize={zonePageSize} onPageChange={setZonePage} onPageSizeChange={(s) => { setZonePageSize(s); setZonePage(1); }} />}
             </div>
           </div>
-          <ZonesTable zones={filteredZones} loading={loading} onClearFilters={clearZoneFilters}
-            hasActiveFilters={hasActiveZoneFilters} page={zonePage} pageSize={zonePageSize} onRowClick={setSelectedZone} />
+          <ZonesTable zones={filteredZones} loading={loading} onClearFilters={clearZoneFilters} hasActiveFilters={hasActiveZoneFilters} page={zonePage} pageSize={zonePageSize} onRowClick={setSelZone} />
         </>
       )}
 
-      {/* Records tab */}
       {activeTab === "records" && (
         <>
           <div className="flex items-center gap-2 flex-wrap mb-4">
             <div className="relative">
-              <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 dark:text-slate-500 pointer-events-none" />
+              <Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" style={{ color: "var(--text-tertiary)" }} />
               <input type="text" placeholder="Search records or values…" value={recordSearch} onChange={(e) => { setRecordSearch(e.target.value); setRecordPage(1); }}
-                className="pl-8 pr-3 py-1.5 rounded-lg border border-slate-200 bg-white text-sm text-slate-700 placeholder-slate-400 focus:outline-none focus:border-blue-400 transition-colors dark:border-[#2a2d3a] dark:bg-[#161825] dark:text-slate-200 dark:placeholder-slate-500" />
+                className="pl-8 pr-3 py-1.5 rounded-lg text-[13px] focus:outline-none" style={{ background: "var(--bg-card)", border: "1px solid var(--border)", color: "var(--text-primary)", width: 220 }}
+                onFocus={(e) => (e.currentTarget.style.borderColor = "var(--brand)")} onBlur={(e) => (e.currentTarget.style.borderColor = "var(--border)")} />
             </div>
-            <DropdownChip label="Profile" allItems={allRecordProfiles} selectedItems={selectedRecordProfiles}
-              onChange={(v) => { setSelectedRecordProfiles(v); setRecordPage(1); }}
-              renderItem={(name) => <span className="flex items-center gap-1.5 text-sm text-slate-700 dark:text-slate-200 truncate"><span className="inline-block w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: profileColorMap[name] ?? "#6366f1" }} />{name}</span>} />
-            <DropdownChip label="Type" allItems={allRecordTypes} selectedItems={selectedRecordTypes}
-              onChange={(v) => { setSelectedRecordTypes(v); setRecordPage(1); }}
+            <ProfileChip allP={allRecordProfiles} selP={selRecordProfiles} onChange={(v) => { setSelRecordProfiles(v); setRecordPage(1); }} />
+            <DropdownChip label="Type" allItems={allRecordTypes} selectedItems={selRecordTypes} onChange={(v) => { setSelRecordTypes(v); setRecordPage(1); }}
               renderItem={(t) => <span className="flex items-center gap-2"><RecordTypeBadge type={t} /></span>} />
-            {hasActiveRecordFilters && (
-              <button type="button" onClick={clearRecordFilters} className="flex items-center gap-1 text-xs text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200 transition-colors">
-                <X size={12} />Clear filters
-              </button>
-            )}
+            {hasActiveRecordFilters && <button onClick={clearRecordFilters} className="flex items-center gap-1 text-[12px]" style={{ color: "var(--text-tertiary)" }}><X size={12} />Clear</button>}
             <div className="ml-auto flex items-center gap-3">
-              <span className="text-xs text-slate-400 dark:text-slate-500 whitespace-nowrap">
-                {filteredRecords.length} of {totalRecords} record{totalRecords !== 1 ? "s" : ""}
-              </span>
-              {totalRecords > 0 && (
-                <Pagination total={filteredRecords.length} page={recordPage} pageSize={recordPageSize}
-                  onPageChange={setRecordPage} onPageSizeChange={(s) => { setRecordPageSize(s); setRecordPage(1); }} />
-              )}
+              <span className="text-[12px]" style={{ color: "var(--text-tertiary)" }}>{filteredRecords.length} of {records.length} records</span>
+              {records.length > 0 && <Pagination total={filteredRecords.length} page={recordPage} pageSize={recordPageSize} onPageChange={setRecordPage} onPageSizeChange={(s) => { setRecordPageSize(s); setRecordPage(1); }} />}
             </div>
           </div>
-          <RecordsTable records={filteredRecords} loading={loading} onClearFilters={clearRecordFilters}
-            hasActiveFilters={hasActiveRecordFilters} page={recordPage} pageSize={recordPageSize} onRowClick={setSelectedRecord} />
+          <RecordsTable records={filteredRecords} loading={loading} onClearFilters={clearRecordFilters} hasActiveFilters={hasActiveRecordFilters} page={recordPage} pageSize={recordPageSize} onRowClick={setSelRecord} />
         </>
       )}
 
-      {/* Drawers */}
-      <ZoneDrawer zone={selectedZone} records={records} onClose={() => setSelectedZone(null)} />
-      <RecordDrawer record={selectedRecord} onClose={() => setSelectedRecord(null)} />
+      <ZoneDrawer zone={selZone} records={records} onClose={() => setSelZone(null)} />
+      <RecordDrawer record={selRecord} onClose={() => setSelRecord(null)} />
     </div>
   );
 }

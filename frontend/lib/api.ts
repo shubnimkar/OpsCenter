@@ -339,3 +339,91 @@ export async function fetchWebsiteStats(id: number): Promise<WebsiteStats> {
   if (!res.ok) throw new Error(`Failed to fetch stats: ${res.status} ${res.statusText}`);
   return res.json();
 }
+
+// ── Notifications ──────────────────────────────────────────────────────────────
+
+import {
+  NotificationsResponse,
+  NotificationSettings,
+  NotificationRecipient,
+} from "./types";
+
+export async function fetchNotifications(
+  opts: { limit?: number; unreadOnly?: boolean } = {},
+): Promise<NotificationsResponse> {
+  const params = new URLSearchParams();
+  if (opts.limit) params.set("limit", String(opts.limit));
+  if (opts.unreadOnly) params.set("unread_only", "true");
+  const res = await fetchApi(`/api/notifications?${params}`);
+  if (!res.ok) throw new Error(`Failed to fetch notifications: ${res.status}`);
+  return res.json();
+}
+
+export async function markNotificationRead(id: number): Promise<void> {
+  const res = await fetchApi(`/api/notifications/${id}/read`, { method: "POST" });
+  if (!res.ok) throw new Error(`Failed to mark read: ${res.status}`);
+}
+
+export async function markAllNotificationsRead(): Promise<void> {
+  const res = await fetchApi("/api/notifications/read-all", { method: "POST" });
+  if (!res.ok) throw new Error(`Failed to mark all read: ${res.status}`);
+}
+
+export async function fetchNotificationSettings(): Promise<NotificationSettings> {
+  const res = await fetchApi("/api/notifications/settings");
+  if (!res.ok) throw new Error(`Failed to fetch notification settings: ${res.status}`);
+  return res.json();
+}
+
+export async function updateNotificationSettings(
+  data: Partial<NotificationSettings>,
+): Promise<NotificationSettings> {
+  const res = await fetchApi("/api/notifications/settings", {
+    method: "PATCH",
+    body: JSON.stringify(data),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail ?? `Failed to update settings: ${res.status}`);
+  }
+  return res.json();
+}
+
+export async function fetchNotificationRecipients(): Promise<NotificationRecipient[]> {
+  const res = await fetchApi("/api/notifications/recipients");
+  if (!res.ok) throw new Error(`Failed to fetch recipients: ${res.status}`);
+  return res.json();
+}
+
+export async function addNotificationRecipient(
+  email: string,
+): Promise<NotificationRecipient> {
+  const res = await fetchApi("/api/notifications/recipients", {
+    method: "POST",
+    body: JSON.stringify({ email }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail ?? `Failed to add recipient: ${res.status}`);
+  }
+  return res.json();
+}
+
+export async function deleteNotificationRecipient(id: number): Promise<void> {
+  const res = await fetchApi(`/api/notifications/recipients/${id}`, {
+    method: "DELETE",
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail ?? `Failed to delete recipient: ${res.status}`);
+  }
+}
+
+export async function sendTestEmail(): Promise<{ sent: boolean; recipients: string[] }> {
+  const res = await fetchApi("/api/notifications/test-email", { method: "POST" });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail ?? `Test email failed: ${res.status}`);
+  }
+  return res.json();
+}

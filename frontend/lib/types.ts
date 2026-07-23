@@ -69,6 +69,7 @@ export interface LambdaFunction {
   MemorySize: number;
   Timeout: number;
   Description: string;
+  LastInvocationTime: string | null;
   CachedAt?: string;
 }
 
@@ -330,4 +331,39 @@ export interface WebsiteStats {
   chart_24h: { t: string; ms: number }[];
   chart_7d: { t: string; ms: number }[];
   chart_30d: { t: string; ms: number }[];
+}
+
+// ── Notifications ─────────────────────────────────────────────────────────────
+
+export type AlertSeverity = "critical" | "warning" | "info";
+
+export interface AlertEvent {
+  id: number;
+  alert_type: string;
+  resource_key: string;
+  title: string;
+  message: string;
+  severity: AlertSeverity;
+  first_fired: string;
+  last_fired: string;
+  resolved_at: string | null;
+  is_read: boolean;
+  email_sent: boolean;
+}
+
+export interface NotificationsResponse {
+  unread_count: number;
+  events: AlertEvent[];
+}
+
+export interface NotificationSettings {
+  sender_email: string | null;
+  enabled: boolean;
+}
+
+export interface NotificationRecipient {
+  id: number;
+  email: string;
+  enabled: boolean;
+  created_at: string;
 }

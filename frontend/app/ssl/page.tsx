@@ -1,7 +1,7 @@
 import SSLDashboard from "@/components/SSLDashboard";
 
 export const metadata = {
-  title: "SSL Certificates — AWS Dashboard",
+  title: "SSL Certificates — Opscentre",
 };
 
 export default function SSLPage() {

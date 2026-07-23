@@ -9,6 +9,7 @@ interface SlideOverDrawerProps {
   onClose: () => void;
   title: string;
   children: React.ReactNode;
+  width?: string;
 }
 
 export default function SlideOverDrawer({
@@ -16,40 +17,30 @@ export default function SlideOverDrawer({
   onClose,
   title,
   children,
+  width = "w-[420px]",
 }: SlideOverDrawerProps) {
   const panelRef = useRef<HTMLDivElement>(null);
   const [mounted, setMounted] = useState(false);
 
-  // Only render the portal after hydration to avoid SSR/client mismatch
-  useEffect(() => {
-    setMounted(true);
-  }, []);
+  useEffect(() => { setMounted(true); }, []);
 
-  // Escape key listener
   useEffect(() => {
     if (!isOpen) return;
-
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
-        onClose();
-      }
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
     };
-
-    document.addEventListener("keydown", handleKeyDown);
-    return () => document.removeEventListener("keydown", handleKeyDown);
+    document.addEventListener("keydown", handler);
+    return () => document.removeEventListener("keydown", handler);
   }, [isOpen, onClose]);
 
-  // Focus trap — move focus to the first focusable element when drawer opens
   useEffect(() => {
     if (!isOpen || !panelRef.current) return;
-
     const focusable = panelRef.current.querySelectorAll<HTMLElement>(
       'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
     );
     const first = focusable[0];
     if (first) {
-      // Small delay to let the transition start before stealing focus
-      const id = setTimeout(() => first.focus(), 50);
+      const id = setTimeout(() => first.focus(), 60);
       return () => clearTimeout(id);
     }
   }, [isOpen]);
@@ -62,9 +53,13 @@ export default function SlideOverDrawer({
       <div
         aria-hidden="true"
         onClick={onClose}
-        className={`fixed inset-0 bg-black/40 z-40 transition-opacity duration-300 ${
-          isOpen ? "opacity-100" : "opacity-0 pointer-events-none"
-        }`}
+        className="fixed inset-0 z-40 transition-opacity duration-200"
+        style={{
+          background: "rgba(0,0,0,0.45)",
+          backdropFilter: "blur(2px)",
+          opacity: isOpen ? 1 : 0,
+          pointerEvents: isOpen ? "auto" : "none",
+        }}
       />
 
       {/* Panel */}
@@ -73,26 +68,38 @@ export default function SlideOverDrawer({
         role="dialog"
         aria-modal="true"
         aria-label={title}
-        className={`fixed top-0 right-0 h-full w-96 z-50 bg-white dark:bg-[#161825] shadow-xl overflow-y-auto flex flex-col transition-transform duration-300 ease-in-out ${
-          isOpen ? "translate-x-0" : "translate-x-full"
-        }`}
+        className={`fixed top-0 right-0 h-full ${width} max-w-[90vw] z-50 flex flex-col overflow-hidden`}
+        style={{
+          background: "var(--bg-card)",
+          borderLeft: "1px solid var(--border)",
+          boxShadow: "-8px 0 40px rgba(0,0,0,0.15)",
+          transform: isOpen ? "translateX(0)" : "translateX(100%)",
+          transition: "transform 250ms cubic-bezier(0.4, 0, 0.2, 1)",
+        }}
       >
         {/* Header */}
-        <div className="shrink-0 h-14 flex items-center justify-between px-6 border-b border-slate-200 dark:border-[#2a2d3a]">
-          <h2 className="text-sm font-semibold text-slate-800 dark:text-slate-200 truncate">
+        <div
+          className="shrink-0 h-14 flex items-center justify-between px-5"
+          style={{ borderBottom: "1px solid var(--border)" }}
+        >
+          <h2
+            className="text-sm font-semibold truncate pr-4"
+            style={{ color: "var(--text-primary)" }}
+          >
             {title}
           </h2>
           <button
             onClick={onClose}
             aria-label="Close drawer"
-            className="p-1.5 rounded-lg text-slate-400 hover:text-slate-600 hover:bg-slate-100 dark:text-slate-500 dark:hover:text-slate-300 dark:hover:bg-white/5 transition-colors"
+            className="shrink-0 p-1.5 rounded-lg transition-colors duration-150"
+            style={{ color: "var(--text-tertiary)" }}
           >
             <X size={16} />
           </button>
         </div>
 
         {/* Body */}
-        <div className="flex-1 p-6 overflow-y-auto">
+        <div className="flex-1 overflow-y-auto px-5 py-5">
           {children}
         </div>
       </div>

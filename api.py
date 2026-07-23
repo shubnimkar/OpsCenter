@@ -37,7 +37,7 @@ async def lifespan(app: FastAPI):
     stop_scheduler()
 
 
-app = FastAPI(title="AWS Dashboard API", lifespan=lifespan)
+app = FastAPI(title="Opscentre API", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -244,20 +244,21 @@ def lambdas():
         with conn.cursor() as cur:
             cur.execute("""
                 SELECT
-                    function_name AS "FunctionName",
-                    profile_name  AS "Profile",
-                    profile_color AS "ProfileColor",
-                    profile_env   AS "ProfileEnvTag",
-                    region        AS "Region",
-                    runtime       AS "Runtime",
-                    handler       AS "Handler",
-                    state         AS "State",
-                    last_modified AS "LastModified",
-                    code_size     AS "CodeSize",
-                    memory_size   AS "MemorySize",
-                    timeout       AS "Timeout",
-                    description   AS "Description",
-                    cached_at     AS "CachedAt"
+                    function_name        AS "FunctionName",
+                    profile_name         AS "Profile",
+                    profile_color        AS "ProfileColor",
+                    profile_env          AS "ProfileEnvTag",
+                    region               AS "Region",
+                    runtime              AS "Runtime",
+                    handler              AS "Handler",
+                    state                AS "State",
+                    last_modified        AS "LastModified",
+                    code_size            AS "CodeSize",
+                    memory_size          AS "MemorySize",
+                    timeout              AS "Timeout",
+                    description          AS "Description",
+                    last_invocation_time AS "LastInvocationTime",
+                    cached_at            AS "CachedAt"
                 FROM lambda_cache
                 ORDER BY profile_name, function_name
             """)
@@ -1481,3 +1482,224 @@ def website_stats(website_id: int):
         "chart_7d":    chart_7d,
         "chart_30d":   chart_30d,
     }
+
+
+# ── Notifications ─────────────────────────────────────────────────────────────
+
+def _row_to_event_dict(row: dict) -> dict:
+    r = dict(row)
+    for key in ("first_fired", "last_fired", "resolved_at"):
+        if r.get(key) and hasattr(r[key], "isoformat"):
+            r[key] = r[key].isoformat()
+    return r
+
+
+@app.get("/api/notifications")
+def list_notifications(limit: int = 50, unread_only: bool = False):
+    """
+    Return recent alert events for the bell drawer.
+    Also returns total unread count for the badge.
+    """
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT COUNT(*) AS cnt FROM alert_events WHERE is_read = FALSE"
+            )
+            unread_count = cur.fetchone()["cnt"]
+
+            where = "WHERE is_read = FALSE" if unread_only else ""
+            cur.execute(
+                f"""
+                SELECT id, alert_type, resource_key, title, message, severity,
+                       first_fired, last_fired, resolved_at, is_read, email_sent
+                FROM alert_events
+                {where}
+                ORDER BY first_fired DESC
+                LIMIT %s
+                """,
+                (min(limit, 200),),
+            )
+            events = [_row_to_event_dict(r) for r in cur.fetchall()]
+
+    return {"unread_count": unread_count, "events": events}
+
+
+@app.post("/api/notifications/{event_id}/read", status_code=204)
+def mark_notification_read(event_id: int):
+    """Mark a single notification as read."""
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "UPDATE alert_events SET is_read = TRUE WHERE id = %s RETURNING id",
+                (event_id,),
+            )
+            if not cur.fetchone():
+                raise HTTPException(status_code=404, detail="Notification not found")
+        conn.commit()
+
+
+@app.post("/api/notifications/read-all", status_code=204)
+def mark_all_notifications_read():
+    """Mark every unread notification as read."""
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute("UPDATE alert_events SET is_read = TRUE WHERE is_read = FALSE")
+        conn.commit()
+
+
+# ── Notification settings ──────────────────────────────────────────────────────
+
+class NotificationSettingsUpdate(BaseModel):
+    sender_email: Optional[str] = None
+    enabled: Optional[bool] = None
+
+    @field_validator("sender_email", mode="before")
+    @classmethod
+    def valid_email(cls, v):
+        if v is None:
+            return v
+        v = str(v).strip().lower()
+        if v and "@" not in v:
+            raise ValueError("sender_email must be a valid email address")
+        return v or None
+
+
+@app.get("/api/notifications/settings")
+def get_notification_settings():
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT sender_email, enabled FROM notification_settings WHERE id = 1")
+            row = cur.fetchone()
+    return dict(row) if row else {"sender_email": None, "enabled": False}
+
+
+@app.patch("/api/notifications/settings")
+def update_notification_settings(payload: NotificationSettingsUpdate):
+    updates = {k: v for k, v in payload.model_dump().items() if v is not None}
+    if not updates:
+        raise HTTPException(status_code=400, detail="No fields to update")
+
+    fields = []
+    values = []
+    if "sender_email" in updates:
+        fields.append("sender_email = %s")
+        values.append(updates["sender_email"])
+    if "enabled" in updates:
+        fields.append("enabled = %s")
+        values.append(updates["enabled"])
+
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                f"UPDATE notification_settings SET {', '.join(fields)} WHERE id = 1 "
+                f"RETURNING sender_email, enabled",
+                values,
+            )
+            row = cur.fetchone()
+        conn.commit()
+    return dict(row)
+
+
+# ── Notification recipients ───────────────────────────────────────────────────
+
+class RecipientCreate(BaseModel):
+    email: str
+
+    @field_validator("email")
+    @classmethod
+    def valid_email(cls, v: str) -> str:
+        v = v.strip().lower()
+        if not v or "@" not in v:
+            raise ValueError("email must be a valid email address")
+        return v
+
+
+@app.get("/api/notifications/recipients")
+def list_recipients():
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT id, email, enabled, created_at FROM notification_recipients ORDER BY id"
+            )
+            rows = cur.fetchall()
+    return [
+        {**dict(r), "created_at": r["created_at"].isoformat() if r["created_at"] else None}
+        for r in rows
+    ]
+
+
+@app.post("/api/notifications/recipients", status_code=201)
+def add_recipient(payload: RecipientCreate):
+    try:
+        with get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO notification_recipients (email)
+                    VALUES (%s)
+                    RETURNING id, email, enabled, created_at
+                    """,
+                    (payload.email,),
+                )
+                row = cur.fetchone()
+            conn.commit()
+    except psycopg2.errors.UniqueViolation:
+        raise HTTPException(status_code=409, detail=f"'{payload.email}' is already a recipient")
+    return {**dict(row), "created_at": row["created_at"].isoformat()}
+
+
+@app.delete("/api/notifications/recipients/{recipient_id}", status_code=204)
+def delete_recipient(recipient_id: int):
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "DELETE FROM notification_recipients WHERE id = %s RETURNING id",
+                (recipient_id,),
+            )
+            if not cur.fetchone():
+                raise HTTPException(status_code=404, detail="Recipient not found")
+        conn.commit()
+
+
+@app.post("/api/notifications/test-email")
+def send_test_email():
+    """
+    Send a test email to all enabled recipients using the configured sender.
+    Useful for verifying the SES setup from the Settings panel.
+    """
+    with get_connection() as conn:
+        from notifications import (
+            _get_notification_settings, _get_recipients,
+            _get_ses_credentials_for_sender, _send_email, _build_email,
+        )
+        settings = _get_notification_settings(conn)
+
+    if not settings.get("enabled"):
+        raise HTTPException(status_code=400, detail="Notifications are disabled")
+
+    sender = settings.get("sender_email")
+    if not sender:
+        raise HTTPException(status_code=400, detail="No sender email configured")
+
+    with get_connection() as conn:
+        recipients = _get_recipients(conn)
+        creds = _get_ses_credentials_for_sender(conn, sender)
+
+    if not recipients:
+        raise HTTPException(status_code=400, detail="No recipients configured")
+    if not creds:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Sender '{sender}' not found as a verified SES identity in any profile",
+        )
+
+    subject, plain, html = _build_email(
+        title="Test notification",
+        message="This is a test email from your Opscentre. Notifications are working correctly.",
+        severity="info",
+    )
+    sent = _send_email(sender, recipients, subject, plain, html, creds)
+    if not sent:
+        raise HTTPException(status_code=500, detail="Failed to send test email — check backend logs")
+
+    return {"sent": True, "recipients": recipients}

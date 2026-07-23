@@ -60,7 +60,7 @@ type ViewMode = "grid" | "list";
 
 // ── Shared input class ────────────────────────────────────────────────────
 const inputCls =
-  "w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-sm text-slate-700 placeholder-slate-400 focus:outline-none focus:border-blue-500 transition-colors dark:bg-[#0f1117] dark:border-[#2a2d3a] dark:text-slate-200 dark:placeholder-slate-600";
+  "w-full rounded-lg px-3 py-2 text-[13px] focus:outline-none transition-colors";
 
 // ── Helpers ───────────────────────────────────────────────────────────────
 function hexToRgb(hex: string): [number, number, number] {
@@ -83,7 +83,7 @@ function SemanticColorPicker({ value, onChange }: { value: string; onChange: (c:
     <div className="space-y-2">
       {COLOR_GROUPS.map(group => (
         <div key={group.label} className="flex items-center gap-3">
-          <span className="w-28 shrink-0 text-xs text-slate-400 dark:text-slate-500 text-right leading-tight">{group.label}</span>
+          <span className="w-28 shrink-0 text-xs [var(--text-tertiary)]  text-right leading-tight">{group.label}</span>
           <div className="flex items-center gap-1.5">
             {group.colors.map(c => (
               <button key={c} type="button" onClick={() => onChange(c)} aria-label={`Color ${c}`}
@@ -108,9 +108,11 @@ function EnvTagSelector({ value, onChange, onColorSuggest }: {
           onClick={() => { onChange(tag.value); onColorSuggest(ENV_TAG_DEFAULT_COLOR[tag.value]); }}
           className={`px-3 py-1 rounded-full text-xs font-semibold border transition-colors ${
             value === tag.value
-              ? "bg-slate-800 text-white border-slate-800 dark:bg-white dark:text-slate-900 dark:border-white"
-              : "bg-white text-slate-500 border-slate-200 hover:border-slate-400 dark:bg-transparent dark:text-slate-400 dark:border-[#2a2d3a] dark:hover:border-slate-500"
-          }`}>{tag.label}</button>
+              ? "text-white border-transparent"
+              : "border-[var(--border)] bg-transparent text-[var(--text-secondary)] hover:border-slate-400"
+          }`}
+          style={value === tag.value ? { backgroundColor: "var(--text-primary)" } : undefined}
+        >{tag.label}</button>
       ))}
     </div>
   );
@@ -133,7 +135,7 @@ function MultiRegionPicker({ value, onChange }: { value: string[]; onChange: (r:
     <div className="space-y-2 max-h-52 overflow-y-auto pr-1">
       {REGION_GROUPS.map(group => (
         <div key={group.label}>
-          <p className="text-xs font-medium text-slate-400 dark:text-slate-500 mb-1">{group.label}</p>
+          <p className="text-xs font-medium [var(--text-tertiary)]  mb-1">{group.label}</p>
           <div className="flex flex-wrap gap-1.5">
             {group.regions.map(r => {
               const active = value.includes(r);
@@ -141,7 +143,7 @@ function MultiRegionPicker({ value, onChange }: { value: string[]; onChange: (r:
                 <button key={r} type="button" onClick={() => toggle(r)}
                   className={`px-2 py-0.5 rounded text-xs font-mono border transition-colors ${
                     active ? "bg-blue-600 text-white border-blue-600"
-                    : "bg-white dark:bg-transparent text-slate-500 dark:text-slate-400 border-slate-200 dark:border-[#2a2d3a] hover:border-blue-400 hover:text-blue-600 dark:hover:border-blue-500 dark:hover:text-blue-400"
+                    : "bg-white dark:bg-transparent [var(--text-tertiary)]  [var(--border)]  hover:border-blue-400 hover:text-blue-600 dark:hover:border-blue-500 dark:hover:text-blue-400"
                   }`}>{r}</button>
               );
             })}
@@ -156,7 +158,7 @@ function MultiRegionPicker({ value, onChange }: { value: string[]; onChange: (r:
 function TestBadge({ state }: { state: TestState }) {
   if (state.status === "idle") return null;
   if (state.status === "testing") return (
-    <div className="flex items-center gap-2 text-sm text-slate-500 dark:text-slate-400">
+    <div className="flex items-center gap-2 text-sm [var(--text-tertiary)] ">
       <RefreshCw size={14} className="animate-spin" /> Testing connection…
     </div>
   );
@@ -192,8 +194,8 @@ function ResourceStat({ icon: Icon, count, label, color }: { icon: React.Element
   return (
     <div className="flex flex-col items-center gap-0.5">
       <Icon size={13} style={{ color }} />
-      <span className="text-sm font-semibold text-slate-800 dark:text-slate-100">{count}</span>
-      <span className="text-[10px] text-slate-400 dark:text-slate-500 leading-tight">{label}</span>
+      <span className="text-sm font-semibold [var(--text-primary)] ">{count}</span>
+      <span className="text-[10px] [var(--text-tertiary)]  leading-tight">{label}</span>
     </div>
   );
 }
@@ -261,7 +263,7 @@ function ProfileDetailModal({
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4" aria-modal="true" role="dialog" aria-label={`${profile.name} details`}>
       <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" onClick={onClose} aria-hidden="true" />
-      <div className="relative bg-white dark:bg-[#161825] rounded-2xl border border-slate-200 dark:border-[#2a2d3a] shadow-2xl w-full max-w-lg overflow-hidden">
+      <div className="relative [var(--bg-card)]  rounded-2xl border [var(--border)]  shadow-2xl w-full max-w-lg overflow-hidden">
 
         {/* Color strip */}
         <div className="h-1.5" style={{ backgroundColor: profile.color }} />
@@ -273,22 +275,22 @@ function ProfileDetailModal({
               <ProfileAvatar name={profile.name} color={profile.color} size="lg" />
               <div>
                 <div className="flex items-center gap-2 flex-wrap">
-                  <h2 className="text-base font-semibold text-slate-900 dark:text-white">{profile.name}</h2>
+                  <h2 className="text-base font-semibold [var(--text-primary)] ">{profile.name}</h2>
                   <EnvTagBadge tag={profile.env_tag} />
                 </div>
                 {profile.account_id && (
-                  <p className="text-xs font-mono text-slate-400 dark:text-slate-500 mt-0.5 flex items-center gap-1">
+                  <p className="text-xs font-mono [var(--text-tertiary)]  mt-0.5 flex items-center gap-1">
                     <BadgeCheck size={10} style={{ color: profile.color }} />
                     {profile.account_id}
                   </p>
                 )}
-                <p className="text-xs text-slate-400 dark:text-slate-500 mt-0.5">
+                <p className="text-xs [var(--text-tertiary)]  mt-0.5">
                   {profile.regions.join(", ")}
                 </p>
               </div>
             </div>
             <button onClick={onClose} aria-label="Close"
-              className="p-1.5 rounded-lg text-slate-400 hover:text-slate-600 hover:bg-slate-100 dark:hover:text-slate-300 dark:hover:bg-white/5 transition-colors shrink-0">
+              className="p-1.5 rounded-lg transition-colors shrink-0" style={{ color: "var(--text-tertiary)" }}>
               <X size={16} />
             </button>
           </div>
@@ -313,7 +315,7 @@ function ProfileDetailModal({
               {testState.status === "idle" && <span className="text-slate-400">Connection not tested</span>}
             </div>
             <button onClick={onTest} disabled={testState.status === "testing"}
-              className="flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium rounded-lg border border-slate-200 dark:border-[#2a2d3a] bg-white dark:bg-[#0f1117] text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-white/5 transition-colors disabled:opacity-50">
+              className="flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium rounded-lg border transition-colors disabled:opacity-50" style={{ background: "var(--bg-subtle)", borderColor: "var(--border)", color: "var(--text-secondary)" }}>
               <Wifi size={11} /> Test
             </button>
           </div>
@@ -321,24 +323,24 @@ function ProfileDetailModal({
 
         {/* Service links */}
         <div className="px-6 pb-6 space-y-2">
-          <p className="text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider mb-3">Resources</p>
+          <p className="text-xs font-semibold [var(--text-tertiary)]  uppercase tracking-wider mb-3">Resources</p>
           {SERVICE_LINKS.map(({ label, icon: Icon, color, count, href, description }) => (
             <button key={label} onClick={() => navigate(href)}
-              className="w-full flex items-center gap-3 p-3 rounded-xl border border-slate-100 dark:border-[#2a2d3a] hover:border-slate-200 dark:hover:border-slate-600 hover:bg-slate-50 dark:hover:bg-white/5 transition-all group text-left">
+              className="w-full flex items-center gap-3 p-3 rounded-xl border [var(--border)]  hover:border-slate-200 dark:hover:border-slate-600 hover:[var(--bg-subtle)]  transition-all group text-left">
               <div className="w-9 h-9 rounded-lg flex items-center justify-center shrink-0"
                 style={{ backgroundColor: `${color}20`, border: `1px solid ${color}30` }}>
                 <Icon size={16} style={{ color }} />
               </div>
               <div className="flex-1 min-w-0">
-                <p className="text-sm font-medium text-slate-700 dark:text-slate-200">{label}</p>
-                <p className="text-xs text-slate-400 dark:text-slate-500 truncate">{description}</p>
+                <p className="text-sm font-medium [var(--text-primary)] ">{label}</p>
+                <p className="text-xs [var(--text-tertiary)]  truncate">{description}</p>
               </div>
               <div className="flex items-center gap-2 shrink-0">
                 {count !== null && (
                   <span className="text-sm font-semibold px-2 py-0.5 rounded-md text-white"
                     style={{ backgroundColor: color }}>{count}</span>
                 )}
-                <ChevronRight size={14} className="text-slate-300 dark:text-slate-600 group-hover:text-slate-500 dark:group-hover:text-slate-400 transition-colors" />
+                <ChevronRight size={14} className="shrink-0 mt-0.5 transition-colors" style={{ color: "var(--text-tertiary)" }} />
               </div>
             </button>
           ))}
@@ -415,11 +417,11 @@ function ProfileForm({ mode, profileId, initialValues, onSuccess, onClose, onTes
 
   return (
     <>
-      <div className="flex items-center gap-3 p-3 rounded-lg bg-slate-50 dark:bg-[#0f1117] border border-slate-200 dark:border-[#2a2d3a] mb-4">
+      <div className="flex items-center gap-3 p-3 rounded-lg mb-4" style={{ background: "var(--bg-subtle)", border: "1px solid var(--border)" }}>
         <ProfileAvatar name={form.name || "?"} color={form.color} size="lg" />
         <div>
-          <p className="text-sm font-semibold text-slate-700 dark:text-slate-200">{form.name || "Profile name"}</p>
-          <p className="text-xs text-slate-400 dark:text-slate-500 mt-0.5">
+          <p className="text-sm font-semibold [var(--text-primary)] ">{form.name || "Profile name"}</p>
+          <p className="text-xs [var(--text-tertiary)]  mt-0.5">
             {form.regions.join(", ") || "no regions"} · <EnvTagBadge tag={form.env_tag} />
           </p>
           {testState.status === "success" && testState.result?.account_id && (
@@ -431,32 +433,32 @@ function ProfileForm({ mode, profileId, initialValues, onSuccess, onClose, onTes
       </div>
       <form onSubmit={handleSubmit} className="space-y-4" noValidate>
         <div>
-          <label className="block text-xs font-medium text-slate-500 dark:text-slate-400 mb-1">Profile name</label>
+          <label className="block text-xs font-medium [var(--text-tertiary)]  mb-1">Profile name</label>
           <input type="text" placeholder="e.g. Production-US" value={form.name}
             onChange={e => setForm(f => ({ ...f, name: e.target.value }))} className={inputCls} />
         </div>
         <div>
-          <label className="block text-xs font-medium text-slate-500 dark:text-slate-400 mb-2">Environment</label>
+          <label className="block text-xs font-medium [var(--text-tertiary)]  mb-2">Environment</label>
           <EnvTagSelector value={form.env_tag} onChange={t => setForm(f => ({ ...f, env_tag: t }))}
             onColorSuggest={c => setForm(f => ({ ...f, color: c }))} />
         </div>
         <div>
-          <label className="block text-xs font-medium text-slate-500 dark:text-slate-400 mb-1">
-            Regions <span className="ml-1 font-normal text-slate-400 dark:text-slate-600">({form.regions.length} selected)</span>
+          <label className="block text-xs font-medium [var(--text-tertiary)]  mb-1">
+            Regions <span className="ml-1 font-normal" style={{ color: "var(--text-tertiary)" }}>({form.regions.length} selected)</span>
           </label>
           <MultiRegionPicker value={form.regions} onChange={r => setForm(f => ({ ...f, regions: r }))} />
         </div>
         <div>
-          <label className="block text-xs font-medium text-slate-500 dark:text-slate-400 mb-1">
-            AWS Access Key ID {mode === "edit" && <span className="ml-1 font-normal text-slate-400 dark:text-slate-600">(leave blank to keep current)</span>}
+          <label className="block text-xs font-medium [var(--text-tertiary)]  mb-1">
+            AWS Access Key ID {mode === "edit" && <span className="ml-1 font-normal" style={{ color: "var(--text-tertiary)" }}>(leave blank to keep current)</span>}
           </label>
           <input type="text" placeholder="AKIAIOSFODNN7EXAMPLE" value={form.access_key}
             onChange={e => { setForm(f => ({ ...f, access_key: e.target.value })); setTestState({ status: "idle" }); }}
             className={`${inputCls} font-mono`} />
         </div>
         <div>
-          <label className="block text-xs font-medium text-slate-500 dark:text-slate-400 mb-1">
-            AWS Secret Access Key {mode === "edit" && <span className="ml-1 font-normal text-slate-400 dark:text-slate-600">(leave blank to keep current)</span>}
+          <label className="block text-xs font-medium [var(--text-tertiary)]  mb-1">
+            AWS Secret Access Key {mode === "edit" && <span className="ml-1 font-normal" style={{ color: "var(--text-tertiary)" }}>(leave blank to keep current)</span>}
           </label>
           <input type="password"
             placeholder={mode === "edit" ? "Leave blank to keep current" : "••••••••••••••••••••••••••••••••••••"}
@@ -465,15 +467,15 @@ function ProfileForm({ mode, profileId, initialValues, onSuccess, onClose, onTes
             className={`${inputCls} font-mono`} />
         </div>
         <div>
-          <label className="block text-xs font-medium text-slate-500 dark:text-slate-400 mb-2">
-            Profile color <span className="ml-1 font-normal text-slate-400 dark:text-slate-600">(grouped by environment)</span>
+          <label className="block text-xs font-medium [var(--text-tertiary)]  mb-2">
+            Profile color <span className="ml-1 font-normal" style={{ color: "var(--text-tertiary)" }}>(grouped by environment)</span>
           </label>
           <SemanticColorPicker value={form.color} onChange={c => setForm(f => ({ ...f, color: c }))} />
         </div>
         {formError && <div className="flex items-center gap-2 text-sm text-red-600 dark:text-red-400"><AlertCircle size={14} /> {formError}</div>}
         <div className="flex gap-2">
           <button type="button" onClick={handleTest} disabled={testState.status === "testing"}
-            className="flex items-center justify-center gap-2 flex-1 border border-slate-200 dark:border-[#2a2d3a] bg-white dark:bg-[#0f1117] hover:bg-slate-50 dark:hover:bg-white/5 text-slate-600 dark:text-slate-300 rounded-lg py-2.5 text-sm font-medium transition-colors disabled:opacity-50">
+            className="flex items-center justify-center gap-2 flex-1 rounded-lg py-2.5 text-sm font-medium transition-colors disabled:opacity-50" style={{ background: "var(--bg-subtle)", border: "1px solid var(--border)", color: "var(--text-secondary)" }}>
             {testState.status === "testing" ? <><RefreshCw size={14} className="animate-spin" /> Testing…</> : <><Wifi size={14} /> Test Connection</>}
           </button>
           <button type="submit" disabled={submitting}
@@ -530,7 +532,7 @@ function ProfileCard({
       onDragOver={onDragOver}
       onDrop={onDrop}
       onDragEnd={onDragEnd}
-      className={`group relative bg-white dark:bg-[#161825] rounded-xl border overflow-hidden flex flex-col transition-all
+      className={`group relative [var(--bg-card)]  rounded-xl border overflow-hidden flex flex-col transition-all
         ${isDragOver ? "shadow-lg scale-[1.01]" : "hover:shadow-md dark:hover:shadow-slate-900/50"}
         ${draggable ? "cursor-default" : ""}`}
       style={accentStyle}
@@ -542,39 +544,39 @@ function ProfileCard({
       {draggable && (
         <div className="absolute top-3 left-3 opacity-0 group-hover:opacity-100 transition-opacity cursor-grab active:cursor-grabbing z-10"
           title="Drag to reorder">
-          <GripVertical size={14} className="text-slate-300 dark:text-slate-600" />
+          <GripVertical size={14} style={{ color: "var(--text-tertiary)" }} />
         </div>
       )}
 
       {/* Clickable header → opens detail modal */}
-      <button onClick={onDetail} className="px-4 pt-4 pb-3 flex items-start gap-3 text-left hover:bg-slate-50/50 dark:hover:bg-white/[0.02] transition-colors" style={headerBg}>
+      <button onClick={onDetail} className="px-4 pt-4 pb-3 flex items-start gap-3 text-left transition-colors" style={headerBg}>
         <ProfileAvatar name={profile.name} color={profile.color} size="lg" />
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 flex-wrap">
-            <p className="text-sm font-semibold text-slate-800 dark:text-slate-100 truncate">{profile.name}</p>
+            <p className="text-sm font-semibold [var(--text-primary)]  truncate">{profile.name}</p>
             <EnvTagBadge tag={profile.env_tag} />
           </div>
-          <p className="text-xs text-slate-400 dark:text-slate-500 mt-0.5 truncate">
+          <p className="text-xs [var(--text-tertiary)]  mt-0.5 truncate">
             {profile.regions.slice(0, 2).join(", ")}{profile.regions.length > 2 && ` +${profile.regions.length - 2}`}
           </p>
           {profile.account_id && (
-            <p className="text-xs font-mono text-slate-400 dark:text-slate-500 mt-0.5 flex items-center gap-1">
+            <p className="text-xs font-mono [var(--text-tertiary)]  mt-0.5 flex items-center gap-1">
               <BadgeCheck size={10} style={{ color: profile.color }} />{profile.account_id}
             </p>
           )}
         </div>
-        <ExternalLink size={12} className="text-slate-300 dark:text-slate-600 shrink-0 mt-0.5 opacity-0 group-hover:opacity-100 transition-opacity" />
+        <ExternalLink size={12} className="shrink-0 mt-0.5 opacity-0 group-hover:opacity-100 transition-opacity" style={{ color: "var(--text-tertiary)" }} />
       </button>
 
       {/* Resource counts */}
-      <div className="px-4 py-3 border-t border-slate-100 dark:border-[#2a2d3a]">
+      <div className="px-4 py-3 border-t [var(--border)] ">
         {summaryLoading ? (
           <div className="flex justify-between">
             {[...Array(4)].map((_, i) => (
               <div key={i} className="flex flex-col items-center gap-1">
-                <div className="w-3 h-3 rounded animate-pulse bg-slate-200 dark:bg-slate-700" />
-                <div className="w-5 h-3 rounded animate-pulse bg-slate-200 dark:bg-slate-700" />
-                <div className="w-8 h-2.5 rounded animate-pulse bg-slate-200 dark:bg-slate-700" />
+                <div className="w-3 h-3 rounded skeleton" />
+                <div className="w-5 h-3 rounded skeleton" />
+                <div className="w-8 h-2.5 rounded skeleton" />
               </div>
             ))}
           </div>
@@ -586,43 +588,43 @@ function ProfileCard({
             <ResourceStat icon={Users}     count={summary.iam_user_count} label="IAM"    color="#10b981" />
           </div>
         ) : (
-          <p className="text-xs text-center text-slate-400 dark:text-slate-600">No cache data yet</p>
+          <p className="text-xs text-center" style={{ color: "var(--text-tertiary)" }}>No cache data yet</p>
         )}
       </div>
 
       {/* Connection status */}
-      <div className="px-4 py-2 border-t border-slate-100 dark:border-[#2a2d3a] flex items-center justify-between min-h-[36px]">
+      <div className="px-4 py-2 border-t [var(--border)]  flex items-center justify-between min-h-[36px]">
         {cs === "testing" && <span className="text-xs text-slate-400 flex items-center gap-1.5"><RefreshCw size={11} className="animate-spin" /> Testing…</span>}
         {cs === "success" && <span className="text-xs text-emerald-600 dark:text-emerald-400 flex items-center gap-1.5"><CheckCircle2 size={11} /> Connected {testState.testedAt && <span className="text-slate-400">· {relativeTime(testState.testedAt)}</span>}</span>}
         {cs === "error" && <span className="text-xs text-red-500 flex items-center gap-1.5 truncate max-w-[160px]" title={testState.result?.message}><WifiOff size={11} className="shrink-0" /><span className="truncate">{testState.result?.message ?? "Failed"}</span></span>}
-        {cs === "idle" && <span className="text-xs text-slate-400 dark:text-slate-500">Never tested</span>}
+        {cs === "idle" && <span className="text-xs [var(--text-tertiary)] ">Never tested</span>}
         <button onClick={onTest} disabled={cs === "testing"} aria-label={`Test ${profile.name}`}
-          className="ml-auto p-1.5 rounded-lg text-slate-400 hover:text-emerald-600 hover:bg-emerald-50 dark:hover:text-emerald-400 dark:hover:bg-emerald-950/30 transition-colors disabled:opacity-40">
+          className="ml-auto p-1.5 rounded-lg transition-colors disabled:opacity-40" style={{ color: "var(--text-tertiary)" }}>
           {cs === "testing" ? <RefreshCw size={13} className="animate-spin" /> : <Wifi size={13} />}
         </button>
       </div>
 
       {/* Actions footer */}
-      <div className="px-4 py-2.5 border-t border-slate-100 dark:border-[#2a2d3a] flex items-center justify-between">
+      <div className="px-4 py-2.5 border-t [var(--border)]  flex items-center justify-between">
         {confirmDelete ? (
           <div className="flex items-center gap-2 text-xs w-full">
-            <span className="text-slate-600 dark:text-slate-300 flex-1">Delete this profile?</span>
+            <span className="[var(--text-secondary)]  flex-1">Delete this profile?</span>
             <button onClick={onConfirmDelete} disabled={deletingId === profile.id}
               className="px-2.5 py-1 bg-red-600 text-white rounded font-medium hover:bg-red-700 disabled:opacity-50 flex items-center gap-1">
               {deletingId === profile.id ? <RefreshCw size={11} className="animate-spin" /> : "Confirm"}
             </button>
-            <button onClick={onCancelDelete} className="px-2 py-1 text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200">Cancel</button>
+            <button onClick={onCancelDelete} className="px-2 py-1 text-[13px] transition-colors" style={{ color: "var(--text-secondary)" }}>Cancel</button>
           </div>
         ) : (
           <>
             {deleteError && <p className="text-xs text-red-500 truncate flex-1">{deleteError}</p>}
             <div className="flex items-center gap-1 ml-auto">
               <button onClick={onEdit} aria-label={`Edit ${profile.name}`} title="Edit"
-                className="p-1.5 rounded-lg text-slate-400 hover:text-blue-600 hover:bg-blue-50 dark:hover:text-blue-400 dark:hover:bg-blue-950/30 transition-colors">
+                className="p-1.5 rounded-lg transition-colors" style={{ color: "var(--text-tertiary)" }}>
                 <Pencil size={13} />
               </button>
               <button onClick={onDelete} aria-label={`Delete ${profile.name}`} title="Delete"
-                className="p-1.5 rounded-lg text-slate-400 hover:text-red-600 hover:bg-red-50 dark:hover:text-red-400 dark:hover:bg-red-950/30 transition-colors">
+                className="p-1.5 rounded-lg transition-colors" style={{ color: "var(--text-tertiary)" }}>
                 <Trash2 size={13} />
               </button>
             </div>
@@ -668,35 +670,35 @@ function ProfileListRow({
       onDragOver={onDragOver}
       onDrop={onDrop}
       onDragEnd={onDragEnd}
-      className={`group px-5 py-3 transition-colors ${isDragOver ? "bg-blue-50/50 dark:bg-blue-950/20 border-l-2 border-blue-500" : "hover:bg-slate-50 dark:hover:bg-[#1c1f2e]"}`}
+      className={`group px-5 py-3 transition-colors ${isDragOver ? "border-l-2 border-blue-500" : ""}`}
     >
       <div className="flex items-center gap-3">
         {/* Drag handle */}
         {draggable && (
           <div className="opacity-0 group-hover:opacity-100 transition-opacity cursor-grab active:cursor-grabbing shrink-0">
-            <GripVertical size={14} className="text-slate-300 dark:text-slate-600" />
+            <GripVertical size={14} style={{ color: "var(--text-tertiary)" }} />
           </div>
         )}
 
         {/* Avatar with status dot */}
         <div className="relative shrink-0">
           <ProfileAvatar name={profile.name} color={profile.color} size="md" />
-          <span className="absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 rounded-full border-2 border-white dark:border-[#161825]"
-            style={{ backgroundColor: cs === "success" ? "#22c55e" : cs === "error" ? "#ef4444" : "#94a3b8" }} />
+          <span className="absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 rounded-full border-2"
+            style={{ borderColor: "var(--bg-card)", backgroundColor: cs === "success" ? "#22c55e" : cs === "error" ? "#ef4444" : "#94a3b8" }} />
         </div>
 
         {/* Clickable name → detail */}
         <button onClick={onDetail} className="flex-1 min-w-0 text-left">
           <div className="flex items-center gap-2 flex-wrap">
-            <p className="text-sm font-medium text-slate-800 dark:text-slate-200 hover:text-blue-600 dark:hover:text-blue-400 transition-colors">{profile.name}</p>
+            <p className="text-sm font-medium [var(--text-primary)]  hover:text-blue-600 dark:hover:text-blue-400 transition-colors">{profile.name}</p>
             <EnvTagBadge tag={profile.env_tag} />
             {profile.account_id && (
-              <span className="text-xs font-mono text-slate-400 dark:text-slate-500 flex items-center gap-0.5">
+              <span className="text-xs font-mono [var(--text-tertiary)]  flex items-center gap-0.5">
                 <BadgeCheck size={10} style={{ color: profile.color }} />{profile.account_id}
               </span>
             )}
           </div>
-          <p className="text-xs text-slate-400 dark:text-slate-500 mt-0.5">
+          <p className="text-xs [var(--text-tertiary)]  mt-0.5">
             {profile.regions.slice(0, 3).join(", ")}{profile.regions.length > 3 && ` +${profile.regions.length - 3}`}
             {testState.testedAt && cs === "success" && <span className="ml-2 text-emerald-500">· tested {relativeTime(testState.testedAt)}</span>}
             {cs === "error" && <span className="ml-2 text-red-400" title={testState.result?.message}>· test failed</span>}
@@ -705,7 +707,7 @@ function ProfileListRow({
 
         {/* Resource counts */}
         {summary && (
-          <div className="hidden sm:flex items-center gap-3 text-xs text-slate-400 dark:text-slate-500 shrink-0">
+          <div className="hidden sm:flex items-center gap-3 text-xs [var(--text-tertiary)]  shrink-0">
             <span className="flex items-center gap-1"><Server size={11} className="text-blue-400" />{summary.ec2_count}</span>
             <span className="flex items-center gap-1"><HardDrive size={11} className="text-orange-400" />{summary.s3_count}</span>
             <span className="flex items-center gap-1"><Zap size={11} className="text-purple-400" />{summary.lambda_count}</span>
@@ -716,27 +718,27 @@ function ProfileListRow({
         {/* Actions */}
         {confirmDelete ? (
           <div className="flex items-center gap-2 text-xs shrink-0">
-            <span className="text-slate-600 dark:text-slate-300">Delete?</span>
+            <span className="[var(--text-secondary)] ">Delete?</span>
             <button onClick={onConfirmDelete} disabled={deletingId === profile.id}
               className="px-2 py-1 bg-red-600 text-white rounded font-medium hover:bg-red-700 disabled:opacity-50">
               {deletingId === profile.id ? <RefreshCw size={11} className="animate-spin" /> : "Confirm"}
             </button>
-            <button onClick={onCancelDelete} className="px-2 py-1 text-slate-500 hover:text-slate-700 dark:text-slate-400">Cancel</button>
+            <button onClick={onCancelDelete} className="px-2 py-1 text-[13px] transition-colors" style={{ color: "var(--text-secondary)" }}>Cancel</button>
           </div>
         ) : (
           <div className="flex items-center gap-1 shrink-0">
             <button onClick={onTest} disabled={cs === "testing"} aria-label={`Test ${profile.name}`}
-              className="p-1.5 rounded-lg text-slate-400 hover:text-emerald-600 hover:bg-emerald-50 dark:hover:text-emerald-400 dark:hover:bg-emerald-950/30 transition-colors disabled:opacity-40">
+              className="p-1.5 rounded-lg transition-colors disabled:opacity-40" style={{ color: "var(--text-tertiary)" }}>
               {cs === "testing" ? <RefreshCw size={14} className="animate-spin" /> :
                cs === "success" ? <CheckCircle2 size={14} className="text-emerald-500" /> :
                cs === "error"   ? <WifiOff size={14} className="text-red-500" /> : <Wifi size={14} />}
             </button>
             <button onClick={onEdit} aria-label={`Edit ${profile.name}`}
-              className="p-1.5 rounded-lg text-slate-400 hover:text-blue-600 hover:bg-blue-50 dark:hover:text-blue-400 dark:hover:bg-blue-950/30 transition-colors">
+              className="p-1.5 rounded-lg transition-colors" style={{ color: "var(--text-tertiary)" }}>
               <Pencil size={14} />
             </button>
             <button onClick={onDelete} aria-label={`Delete ${profile.name}`}
-              className="p-1.5 rounded-lg text-slate-400 hover:text-red-600 hover:bg-red-50 dark:hover:text-red-400 dark:hover:bg-red-950/30 transition-colors">
+              className="p-1.5 rounded-lg transition-colors" style={{ color: "var(--text-tertiary)" }}>
               <Trash2 size={14} />
             </button>
           </div>
@@ -755,19 +757,19 @@ function EmptyState({ onAdd }: { onAdd: () => void }) {
         <Server size={28} className="text-blue-500" />
       </div>
       <div>
-        <p className="text-sm font-semibold text-slate-800 dark:text-slate-100 mb-1">No AWS profiles yet</p>
-        <p className="text-xs text-slate-400 dark:text-slate-500 max-w-xs">
+        <p className="text-sm font-semibold [var(--text-primary)]  mb-1">No AWS profiles yet</p>
+        <p className="text-xs [var(--text-tertiary)]  max-w-xs">
           Add your first AWS account to start monitoring EC2, S3, Lambda, and IAM resources.
         </p>
       </div>
-      <div className="space-y-2 text-left bg-slate-50 dark:bg-[#0f1117] border border-slate-200 dark:border-[#2a2d3a] rounded-xl px-5 py-4 w-full max-w-xs">
-        <p className="text-xs font-semibold text-slate-600 dark:text-slate-300 mb-2">Quick setup</p>
+      <div className="space-y-2 text-left rounded-xl px-5 py-4 w-full max-w-xs" style={{ background: "var(--bg-subtle)", border: "1px solid var(--border)" }}>
+        <p className="text-xs font-semibold [var(--text-secondary)]  mb-2">Quick setup</p>
         {[
           { n: "1", text: "Create an IAM user with read-only policies" },
           { n: "2", text: "Generate an access key pair" },
           { n: "3", text: "Click Add Profile and paste your keys" },
         ].map(step => (
-          <div key={step.n} className="flex items-start gap-2.5 text-xs text-slate-500 dark:text-slate-400">
+          <div key={step.n} className="flex items-start gap-2.5 text-xs [var(--text-tertiary)] ">
             <span className="w-4 h-4 rounded-full bg-blue-100 dark:bg-blue-900/40 text-blue-600 dark:text-blue-400 flex items-center justify-center shrink-0 text-[10px] font-bold">{step.n}</span>
             {step.text}
           </div>
@@ -1010,14 +1012,14 @@ export default function ProfilesPage() {
   });
 
   return (
-    <div className="p-6 overflow-auto bg-slate-100 dark:bg-[#0f1117] min-h-screen">
+    <div className="p-6 min-h-screen" style={{ background: "var(--bg-page)" }}>
       <div className="max-w-5xl mx-auto space-y-5">
 
         {/* Header */}
         <div className="flex items-start justify-between gap-4">
           <div>
-            <h2 className="text-lg font-semibold text-slate-900 dark:text-white">AWS Profiles</h2>
-            <p className="text-sm text-slate-400 dark:text-slate-500 mt-0.5">
+            <h2 className="text-lg font-semibold [var(--text-primary)] ">AWS Profiles</h2>
+            <p className="text-sm [var(--text-tertiary)]  mt-0.5">
               Manage the AWS accounts this dashboard connects to
             </p>
           </div>
@@ -1030,24 +1032,24 @@ export default function ProfilesPage() {
         {/* Toolbar */}
         <div className="flex flex-wrap items-center gap-2">
           <div className="relative flex-1 min-w-[180px]">
-            <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 dark:text-slate-500 pointer-events-none" />
+            <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 [var(--text-tertiary)]  pointer-events-none" />
             <input type="text" placeholder="Search by name, region, or environment…" value={search}
               onChange={e => { setSearch(e.target.value); setPage(1); }}
-              className="w-full bg-white dark:bg-[#161825] border border-slate-200 dark:border-[#2a2d3a] rounded-lg pl-9 pr-3 py-2 text-sm text-slate-700 dark:text-slate-200 placeholder-slate-400 dark:placeholder-slate-600 focus:outline-none focus:border-blue-500 transition-colors" />
+              className="w-full [var(--bg-card)]  border [var(--border)]  rounded-lg pl-9 pr-3 py-2 text-sm [var(--text-primary)]  placeholder-slate-400 dark:placeholder-slate-600 focus:outline-none focus:border-blue-500 transition-colors" />
           </div>
 
-          <div className="flex items-center gap-1.5 bg-white dark:bg-[#161825] border border-slate-200 dark:border-[#2a2d3a] rounded-lg px-2.5 py-1.5">
-            <ArrowUpDown size={13} className="text-slate-400 dark:text-slate-500 shrink-0" />
+          <div className="flex items-center gap-1.5 [var(--bg-card)]  border [var(--border)]  rounded-lg px-2.5 py-1.5">
+            <ArrowUpDown size={13} className="[var(--text-tertiary)]  shrink-0" />
             <select value={sortKey} onChange={e => setSortKey(e.target.value as SortKey)}
-              className="text-xs text-slate-600 dark:text-slate-300 bg-transparent focus:outline-none cursor-pointer">
+              className="text-xs [var(--text-secondary)]  bg-transparent focus:outline-none cursor-pointer">
               {SORT_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
             </select>
           </div>
 
-          <div className="flex items-center border border-slate-200 dark:border-[#2a2d3a] rounded-lg overflow-hidden">
+          <div className="flex items-center border [var(--border)]  rounded-lg overflow-hidden">
             {([["grid", LayoutGrid], ["list", List]] as [ViewMode, React.ElementType][]).map(([mode, Icon]) => (
               <button key={mode} onClick={() => setViewMode(mode)} aria-label={`${mode} view`}
-                className={`px-2.5 py-1.5 transition-colors ${viewMode === mode ? "bg-blue-600 text-white" : "bg-white dark:bg-[#161825] text-slate-400 dark:text-slate-500 hover:text-slate-600 dark:hover:text-slate-300"}`}>
+                className={`px-2.5 py-1.5 transition-colors ${viewMode === mode ? "bg-blue-600 text-white" : "[var(--bg-card)]  [var(--text-tertiary)]  hover:text-slate-600 dark:hover:text-slate-300"}`}>
                 <Icon size={14} />
               </button>
             ))}
@@ -1055,7 +1057,7 @@ export default function ProfilesPage() {
 
           {!loading && profiles.length > 0 && (
             <button onClick={handleBulkTest} disabled={bulkTesting}
-              className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium border border-slate-200 dark:border-[#2a2d3a] rounded-lg bg-white dark:bg-[#161825] text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-white/5 transition-colors disabled:opacity-50 whitespace-nowrap">
+              className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium border [var(--border)]  rounded-lg [var(--bg-card)]  [var(--text-secondary)]  hover:[var(--bg-subtle)]  transition-colors disabled:opacity-50 whitespace-nowrap">
               {bulkTesting ? <><RefreshCw size={12} className="animate-spin" /> Testing all…</> : <><TestTube2 size={12} /> Test all</>}
             </button>
           )}
@@ -1068,35 +1070,35 @@ export default function ProfilesPage() {
 
         {/* Drag hint */}
         {canDrag && profiles.length > 1 && (
-          <p className="text-xs text-slate-400 dark:text-slate-600 flex items-center gap-1.5">
+          <p className="text-xs flex items-center gap-1.5" style={{ color: "var(--text-tertiary)" }}>
             <GripVertical size={11} /> Drag cards to reorder — order is saved automatically
           </p>
         )}
 
         {/* Content */}
         {loading ? (
-          <div className={viewMode === "grid" ? "grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4" : "bg-white dark:bg-[#161825] rounded-xl border border-slate-200 dark:border-[#2a2d3a] overflow-hidden"}>
+          <div className={viewMode === "grid" ? "grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4" : "[var(--bg-card)]  rounded-xl border [var(--border)]  overflow-hidden"}>
             {Array.from({ length: 3 }, (_, i) =>
               viewMode === "grid" ? (
-                <div key={i} className="bg-white dark:bg-[#161825] rounded-xl border border-slate-200 dark:border-[#2a2d3a] overflow-hidden">
-                  <div className="h-1.5 w-full animate-pulse bg-slate-200 dark:bg-slate-700" />
+                <div key={i} className="[var(--bg-card)]  rounded-xl border [var(--border)]  overflow-hidden">
+                  <div className="h-1.5 w-full skeleton" />
                   <div className="p-4 flex items-start gap-3">
-                    <div className="w-11 h-11 rounded-full animate-pulse bg-slate-200 dark:bg-slate-700 shrink-0" />
+                    <div className="w-11 h-11 rounded-full skeleton shrink-0" />
                     <div className="flex-1 space-y-1.5">
-                      <div className="w-28 h-3.5 rounded animate-pulse bg-slate-200 dark:bg-slate-700" />
-                      <div className="w-20 h-3 rounded animate-pulse bg-slate-200 dark:bg-slate-700" />
+                      <div className="w-28 h-3.5 rounded skeleton" />
+                      <div className="w-20 h-3 rounded skeleton" />
                     </div>
                   </div>
-                  <div className="px-4 py-3 border-t border-slate-100 dark:border-[#2a2d3a] flex justify-between">
-                    {[...Array(4)].map((_, j) => <div key={j} className="w-8 h-8 rounded animate-pulse bg-slate-200 dark:bg-slate-700" />)}
+                  <div className="px-4 py-3 border-t [var(--border)]  flex justify-between">
+                    {[...Array(4)].map((_, j) => <div key={j} className="w-8 h-8 rounded skeleton" />)}
                   </div>
                 </div>
               ) : (
-                <div key={i} className="px-5 py-4 border-b border-slate-100 dark:border-[#2a2d3a] flex items-center gap-3">
-                  <div className="w-9 h-9 rounded-full animate-pulse bg-slate-200 dark:bg-slate-700" />
+                <div key={i} className="px-5 py-4 border-b [var(--border)]  flex items-center gap-3">
+                  <div className="w-9 h-9 rounded-full skeleton" />
                   <div className="space-y-1.5">
-                    <div className="w-32 h-3.5 rounded animate-pulse bg-slate-200 dark:bg-slate-700" />
-                    <div className="w-20 h-3 rounded animate-pulse bg-slate-200 dark:bg-slate-700" />
+                    <div className="w-32 h-3.5 rounded skeleton" />
+                    <div className="w-20 h-3 rounded skeleton" />
                   </div>
                 </div>
               )
@@ -1112,11 +1114,11 @@ export default function ProfilesPage() {
             </div>
           </div>
         ) : profiles.length === 0 ? (
-          <div className="bg-white dark:bg-[#161825] rounded-xl border border-slate-200 dark:border-[#2a2d3a] overflow-hidden">
+          <div className="[var(--bg-card)]  rounded-xl border [var(--border)]  overflow-hidden">
             <EmptyState onAdd={openAddDrawer} />
           </div>
         ) : filtered.length === 0 ? (
-          <div className="bg-white dark:bg-[#161825] rounded-xl border border-slate-200 dark:border-[#2a2d3a] py-12 text-center text-sm text-slate-400 dark:text-slate-500">
+          <div className="[var(--bg-card)]  rounded-xl border [var(--border)]  py-12 text-center text-sm [var(--text-tertiary)] ">
             No profiles match &ldquo;{search}&rdquo;.
           </div>
         ) : viewMode === "grid" ? (
@@ -1126,13 +1128,13 @@ export default function ProfilesPage() {
             ))}
           </div>
         ) : (
-          <div className="bg-white dark:bg-[#161825] rounded-xl border border-slate-200 dark:border-[#2a2d3a] overflow-hidden">
-            <div className="px-5 py-3 border-b border-slate-100 dark:border-[#2a2d3a]">
-              <h3 className="text-sm font-semibold text-slate-700 dark:text-slate-300">
+          <div className="[var(--bg-card)]  rounded-xl border [var(--border)]  overflow-hidden">
+            <div className="px-5 py-3 border-b [var(--border)] ">
+              <h3 className="text-sm font-semibold" style={{ color: "var(--text-secondary)" }}>
                 {search.trim() ? `${filtered.length} result${filtered.length === 1 ? "" : "s"}` : `Saved profiles (${profiles.length})`}
               </h3>
             </div>
-            <ul className="divide-y divide-slate-100 dark:divide-[#2a2d3a]">
+            <ul className="">
               {paginated.map(profile => (
                 <ProfileListRow key={profile.id} {...sharedCardProps(profile)} />
               ))}

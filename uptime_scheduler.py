@@ -77,7 +77,7 @@ def run_check_for_website(website_id: int) -> None:
             with conn.cursor() as cur:
                 cur.execute(
                     """
-                    SELECT id, url, expected_status, timeout_seconds,
+                    SELECT id, name, url, expected_status, timeout_seconds,
                            keyword, maintenance_mode, monitoring_interval
                     FROM website_monitor
                     WHERE id = %s
@@ -150,6 +150,18 @@ def run_check_for_website(website_id: int) -> None:
             result["http_status"],
             result["response_time_ms"],
         )
+
+        # Evaluate notification state after writing the result
+        try:
+            from notifications import evaluate_uptime
+            evaluate_uptime(
+                website_id=website_id,
+                website_name=site["name"],
+                url=site["url"],
+                new_status=result["status"],
+            )
+        except Exception as notif_exc:
+            logger.warning("uptime: notification eval failed for id=%d: %s", website_id, notif_exc)
 
     except Exception as exc:
         logger.error("uptime: error checking website_id=%d: %s", website_id, exc)

@@ -1,22 +1,20 @@
 interface SkeletonRowProps {
   columns: number;
+  rowHeight?: string;
 }
 
-const COL_WIDTHS: Record<number, string> = {
-  0: "w-24",
-  1: "w-32",
-  2: "w-16",
-};
+export default function SkeletonRow({
+  columns,
+  rowHeight = "h-[48px]",
+}: SkeletonRowProps) {
+  const widths = ["w-32", "w-24", "w-20", "w-28", "w-16", "w-24", "w-20", "w-28", "w-16"];
 
-export default function SkeletonRow({ columns }: SkeletonRowProps) {
   return (
-    <tr>
+    <tr className={`bg-[var(--bg-card)] ${rowHeight}`} aria-hidden="true">
       {Array.from({ length: columns }, (_, i) => (
         <td key={i} className="px-4 py-3">
           <div
-            className={`animate-pulse bg-slate-200 dark:bg-slate-700 rounded h-4 ${
-              COL_WIDTHS[i] ?? "w-20"
-            }`}
+            className={`skeleton h-3.5 rounded-md ${widths[i % widths.length]}`}
           />
         </td>
       ))}

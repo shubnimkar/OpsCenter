@@ -23,12 +23,12 @@ function monogram(name: string): string {
   return (words[0][0] + words[1][0]).toUpperCase();
 }
 
-const ENV_TAG_CONFIG: Record<EnvTag, { label: string; bg: string; text: string }> = {
-  prod:    { label: "prod",    bg: "bg-red-100 dark:bg-red-900/30",    text: "text-red-600 dark:text-red-400" },
-  staging: { label: "staging", bg: "bg-amber-100 dark:bg-amber-900/30", text: "text-amber-600 dark:text-amber-400" },
-  dev:     { label: "dev",     bg: "bg-emerald-100 dark:bg-emerald-900/30", text: "text-emerald-600 dark:text-emerald-400" },
-  sandbox: { label: "sandbox", bg: "bg-violet-100 dark:bg-violet-900/30", text: "text-violet-600 dark:text-violet-400" },
-  other:   { label: "other",   bg: "bg-slate-100 dark:bg-slate-700/50",  text: "text-slate-500 dark:text-slate-400" },
+const ENV_TAG_CONFIG: Record<EnvTag, { label: string; bgStyle: string; textStyle: string }> = {
+  prod:    { label: "prod",    bgStyle: "rgba(239,68,68,0.12)",    textStyle: "#ef4444" },
+  staging: { label: "staging", bgStyle: "rgba(245,158,11,0.12)",   textStyle: "#f59e0b" },
+  dev:     { label: "dev",     bgStyle: "rgba(16,185,129,0.12)",   textStyle: "#10b981" },
+  sandbox: { label: "sandbox", bgStyle: "rgba(139,92,246,0.12)",   textStyle: "#8b5cf6" },
+  other:   { label: "other",   bgStyle: "var(--bg-subtle)",         textStyle: "var(--text-tertiary)" },
 };
 
 const SIZE_CONFIG = {
@@ -60,7 +60,10 @@ export function ProfileAvatar({ name, color, size = "md" }: ProfileAvatarProps) 
 export function EnvTagBadge({ tag }: { tag: EnvTag }) {
   const cfg = ENV_TAG_CONFIG[tag];
   return (
-    <span className={`inline-flex items-center rounded-md px-1.5 py-0.5 text-[10px] font-semibold tracking-wide uppercase ${cfg.bg} ${cfg.text}`}>
+    <span
+      className="inline-flex items-center rounded-md px-1.5 py-0.5 text-[10px] font-semibold tracking-wide uppercase"
+      style={{ background: cfg.bgStyle, color: cfg.textStyle }}
+    >
       {cfg.label}
     </span>
   );

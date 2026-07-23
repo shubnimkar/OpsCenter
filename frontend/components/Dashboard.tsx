@@ -11,38 +11,18 @@ import { FilterToolbar, useFilterState, applyFilters } from "./filters";
 import type { FilterConfig, FilterOption } from "./filters";
 import Pagination, { PageSize } from "./Pagination";
 
-// ── CopyErrorButton ────────────────────────────────────────────────────────
-
 function CopyErrorButton({ error }: { error: string }) {
   const [copied, setCopied] = useState(false);
-
-  const handleCopy = () => {
-    navigator.clipboard.writeText(error);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 1500);
-  };
-
   return (
     <button
-      onClick={handleCopy}
-      className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium border border-red-300 text-red-600 hover:bg-red-100 dark:border-red-500/40 dark:text-red-400 dark:hover:bg-red-500/10 transition-colors"
+      onClick={() => { navigator.clipboard.writeText(error); setCopied(true); setTimeout(() => setCopied(false), 1500); }}
+      className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[13px] font-medium transition-colors duration-150"
+      style={{ border: "1px solid rgba(239,68,68,0.4)", color: "#ef4444" }}
     >
-      {copied ? (
-        <>
-          <Check size={13} className="text-emerald-500" />
-          Copied
-        </>
-      ) : (
-        <>
-          <Copy size={13} />
-          Copy error details
-        </>
-      )}
+      {copied ? <><Check size={13} className="text-emerald-500" />Copied</> : <><Copy size={13} />Copy error</>}
     </button>
   );
 }
-
-// ── Dashboard ──────────────────────────────────────────────────────────────
 
 export default function Dashboard() {
   const [instances, setInstances] = useState<Instance[]>([]);
@@ -58,206 +38,108 @@ export default function Dashboard() {
     beforeRefresh,
   });
 
-  // Pagination
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState<PageSize>(10);
 
-  // Filter state — convention: [] = show all
-  const {
-    filterState,
-    setFilter,
-    clearFilters,
-    search,
-    setSearch,
-    debouncedSearch,
-  } = useFilterState({ onFilterChange: () => setPage(1) });
+  const { filterState, setFilter, clearFilters, search, setSearch, debouncedSearch } =
+    useFilterState({ onFilterChange: () => setPage(1) });
 
-  // ── Derived option lists ────────────────────────────────────────────────
-
-  const allProfiles = useMemo(
-    () => [...new Set(instances.map((i) => i.Profile))].sort(),
-    [instances]
-  );
-  const allStates = useMemo(
-    () => [...new Set(instances.map((i) => i.State))].sort(),
-    [instances]
-  );
-  const allTypes = useMemo(
-    () => [...new Set(instances.map((i) => i["Instance Type"]))].sort(),
-    [instances]
-  );
-
-  const profileColorMap = useMemo(
-    () => Object.fromEntries(instances.map((i) => [i.Profile, i.ProfileColor])),
-    [instances]
-  );
-
-  const allOptionsByKey: Record<string, string[]> = useMemo(
-    () => ({ profile: allProfiles, state: allStates, type: allTypes }),
-    [allProfiles, allStates, allTypes]
-  );
-
-  // ── Filter config ───────────────────────────────────────────────────────
-  // Recommended order: search | environment | region | status | type | profile
+  const allProfiles = useMemo(() => [...new Set(instances.map((i) => i.Profile))].sort(), [instances]);
+  const allStates   = useMemo(() => [...new Set(instances.map((i) => i.State))].sort(), [instances]);
+  const allTypes    = useMemo(() => [...new Set(instances.map((i) => i["Instance Type"]))].sort(), [instances]);
+  const profileColorMap = useMemo(() => Object.fromEntries(instances.map((i) => [i.Profile, i.ProfileColor])), [instances]);
+  const allOptionsByKey = useMemo(() => ({ profile: allProfiles, state: allStates, type: allTypes }), [allProfiles, allStates, allTypes]);
 
   const profileOptions: FilterOption[] = useMemo(
-    () =>
-      allProfiles.map((name) => ({
-        value: name,
-        label: name,
-        color: profileColorMap[name] ?? "#6366f1",
-      })),
+    () => allProfiles.map((name) => ({ value: name, label: name, color: profileColorMap[name] ?? "#6366f1" })),
     [allProfiles, profileColorMap]
   );
 
-  const filters: FilterConfig[] = useMemo(
-    () => [
-      {
-        key: "state",
-        label: "State",
-        type: "multi-select" as const,
-        options: allStates.map((s) => ({ value: s })),
-      },
-      {
-        key: "type",
-        label: "Instance Type",
-        type: "multi-select" as const,
-        options: allTypes.map((t) => ({ value: t })),
-      },
-      {
-        key: "profile",
-        label: "Profile",
-        type: "multi-select" as const,
-        options: profileOptions,
-      },
-    ],
-    [allStates, allTypes, profileOptions]
-  );
-
-  // ── Active filter detection ─────────────────────────────────────────────
+  const filters: FilterConfig[] = useMemo(() => [
+    { key: "state",   label: "State",         type: "multi-select" as const, options: allStates.map((s) => ({ value: s })) },
+    { key: "type",    label: "Instance Type",  type: "multi-select" as const, options: allTypes.map((t) => ({ value: t })) },
+    { key: "profile", label: "Profile",        type: "multi-select" as const, options: profileOptions },
+  ], [allStates, allTypes, profileOptions]);
 
   const hasActiveFilters = useMemo(() => {
     if (debouncedSearch.trim()) return true;
     return Object.entries(filterState).some(([key, selected]) => {
-      const total = allOptionsByKey[key]?.length ?? 0;
+      const total = allOptionsByKey[key as keyof typeof allOptionsByKey]?.length ?? 0;
       return selected.length > 0 && selected.length < total;
     });
   }, [filterState, debouncedSearch, allOptionsByKey]);
 
-  // ── Filter logic ────────────────────────────────────────────────────────
+  const filtered = useMemo(() => applyFilters(
+    instances, filterState, debouncedSearch,
+    (inst, key) => {
+      if (key === "profile") return inst.Profile;
+      if (key === "state")   return inst.State;
+      if (key === "type")    return inst["Instance Type"];
+      return "";
+    },
+    (inst) => [inst.Name]
+  ), [instances, filterState, debouncedSearch]);
 
-  const filtered = useMemo(
-    () =>
-      applyFilters(
-        instances,
-        filterState,
-        debouncedSearch,
-        (inst, key) => {
-          if (key === "profile") return inst.Profile;
-          if (key === "state") return inst.State;
-          if (key === "type") return inst["Instance Type"];
-          return "";
-        },
-        (inst) => [inst.Name]
-      ),
-    [instances, filterState, debouncedSearch]
-  );
-
-  // ── Stat counts ─────────────────────────────────────────────────────────
-
-  const total = instances.length;
-  const runningCount = useMemo(
-    () => instances.filter((i) => i.State === "running").length,
-    [instances]
-  );
-  const stoppedCount = useMemo(
-    () => instances.filter((i) => i.State === "stopped").length,
-    [instances]
-  );
-
-  // ── Handlers ────────────────────────────────────────────────────────────
+  const total        = instances.length;
+  const runningCount = useMemo(() => instances.filter((i) => i.State === "running").length, [instances]);
+  const stoppedCount = useMemo(() => instances.filter((i) => i.State === "stopped").length, [instances]);
 
   const handleStatCardClick = (state: string) => {
     const current = filterState["state"] ?? [];
-    if (current.length === 1 && current[0] === state) {
-      // Toggle off — clear the state filter
-      setFilter("state", []);
-    } else {
-      setFilter("state", [state]);
-    }
+    setFilter("state", current.length === 1 && current[0] === state ? [] : [state]);
     setPage(1);
   };
 
-  const handleClearAll = () => {
-    clearFilters();
-    setPage(1);
-  };
-
-  const ratio = (value: number, t: number) =>
-    t === 0
-      ? "0 of 0 (0%)"
-      : `${value} of ${t} (${Math.round((value / t) * 100)}%)`;
+  const handleClearAll = () => { clearFilters(); setPage(1); };
+  const pct = (v: number, t: number) => t === 0 ? "0%" : `${Math.round((v / t) * 100)}%`;
 
   return (
-    <div className="p-6 overflow-auto bg-slate-100 dark:bg-[#0f1117] min-h-full">
-      {/* ── Page header ── */}
+    <div className="p-6 min-h-full" style={{ background: "var(--bg-page)" }}>
+      {/* Header */}
       <div className="flex items-center justify-between mb-6">
         <div>
-          <h2 className="text-lg font-semibold text-slate-900 dark:text-white">Instances</h2>
-          {lastUpdated && (
-            <p className="text-xs text-slate-400 mt-0.5">
-              Synced {lastUpdated.toLocaleTimeString()}
-            </p>
-          )}
+          <h1 className="text-[20px] font-bold tracking-tight" style={{ color: "var(--text-primary)" }}>
+            EC2 Instances
+          </h1>
+          <p className="text-[13px] mt-0.5" style={{ color: "var(--text-tertiary)" }}>
+            {lastUpdated ? `Synced ${lastUpdated.toLocaleTimeString()}` : "Loading…"}
+          </p>
         </div>
         <button
           onClick={() => load(true)}
           disabled={refreshing}
-          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium border border-slate-200 bg-white text-slate-600 hover:bg-slate-50 disabled:opacity-50 transition-colors dark:border-[#2a2d3a] dark:bg-[#161825] dark:text-slate-300 dark:hover:bg-white/5"
+          className="flex items-center gap-2 px-3 py-2 rounded-lg text-[13px] font-medium transition-colors duration-150 disabled:opacity-50"
+          style={{ background: "var(--bg-card)", border: "1px solid var(--border)", color: "var(--text-secondary)" }}
         >
           <RefreshCw size={14} className={refreshing ? "animate-spin" : ""} />
           {refreshing ? "Polling AWS…" : "Refresh"}
         </button>
       </div>
 
-      {/* ── Stat cards ── */}
+      {/* Stat cards */}
       <div className="grid grid-cols-3 gap-4 mb-6">
-        <StatCard
-          label="Total"
-          value={total}
-          total={total}
-          color="blue"
-          icon={<Server size={20} />}
-        />
+        <StatCard label="Total Instances" value={loading ? 0 : total} color="blue" icon={<Server size={18} />} />
         <StatCard
           label="Running"
-          value={runningCount}
-          total={total}
+          value={loading ? 0 : runningCount}
           color="green"
-          icon={<Activity size={20} />}
+          icon={<Activity size={18} />}
           onClick={() => handleStatCardClick("running")}
-          isActive={
-            (filterState["state"] ?? []).length === 1 &&
-            filterState["state"][0] === "running"
-          }
-          ratio={ratio(runningCount, total)}
+          isActive={(filterState["state"] ?? []).length === 1 && filterState["state"][0] === "running"}
+          ratio={`${pct(runningCount, total)} of total`}
         />
         <StatCard
           label="Stopped"
-          value={stoppedCount}
-          total={total}
+          value={loading ? 0 : stoppedCount}
           color="red"
-          icon={<StopCircle size={20} />}
+          icon={<StopCircle size={18} />}
           onClick={() => handleStatCardClick("stopped")}
-          isActive={
-            (filterState["state"] ?? []).length === 1 &&
-            filterState["state"][0] === "stopped"
-          }
-          ratio={ratio(stoppedCount, total)}
+          isActive={(filterState["state"] ?? []).length === 1 && filterState["state"][0] === "stopped"}
+          ratio={`${pct(stoppedCount, total)} of total`}
         />
       </div>
 
-      {/* ── Filter toolbar ── */}
+      {/* Filter toolbar */}
       <div className="mb-4">
         <FilterToolbar
           filters={filters}
@@ -285,14 +167,14 @@ export default function Dashboard() {
         />
       </div>
 
-      {/* ── Main content ── */}
+      {/* Content */}
       {error ? (
-        <div className="rounded-xl border border-red-200 bg-red-50 dark:border-red-500/30 dark:bg-red-950/20 p-6 text-red-600 dark:text-red-400">
-          <p className="font-semibold mb-1">Failed to load instances</p>
-          <p className="text-sm font-mono opacity-80 mb-3">{error}</p>
+        <div className="rounded-xl border p-6" style={{ background: "rgba(239,68,68,0.05)", borderColor: "rgba(239,68,68,0.2)" }}>
+          <p className="text-[14px] font-semibold mb-1" style={{ color: "#ef4444" }}>Failed to load instances</p>
+          <p className="text-[13px] font-mono mb-3 opacity-80" style={{ color: "#ef4444" }}>{error}</p>
           <div className="flex items-center gap-3">
             <CopyErrorButton error={error} />
-            <button onClick={() => load()} className="text-sm underline hover:no-underline">
+            <button onClick={() => load()} className="text-[13px] underline hover:no-underline" style={{ color: "var(--text-secondary)" }}>
               Try again
             </button>
           </div>

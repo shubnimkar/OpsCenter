@@ -5,10 +5,7 @@ import {
   RefreshCw, Mail, Globe, Search, ChevronDown, ChevronUp, ChevronsUpDown,
   Copy, Check, X, ShieldCheck, ShieldOff, Gauge, AlertTriangle,
 } from "lucide-react";
-import {
-  fetchSESIdentities, fetchSESSendingQuotas, fetchSESAccountStats,
-  triggerSchedulerPoll,
-} from "@/lib/api";
+import { fetchSESIdentities, fetchSESSendingQuotas, fetchSESAccountStats, triggerSchedulerPoll } from "@/lib/api";
 import { useResourceLoad } from "@/lib/useInitialFetch";
 import { SESIdentity, SESSendingQuota, SESAccountStats } from "@/lib/types";
 import StatCard from "./StatCard";
@@ -19,102 +16,81 @@ import SlideOverDrawer from "./SlideOverDrawer";
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
-const VERIFICATION_COLORS: Record<string, string> = {
-  Success:          "bg-emerald-100 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-400",
-  Pending:          "bg-amber-100 text-amber-700 dark:bg-amber-950/40 dark:text-amber-400",
-  Failed:           "bg-red-100 text-red-600 dark:bg-red-950/40 dark:text-red-400",
-  TemporaryFailure: "bg-orange-100 text-orange-700 dark:bg-orange-950/40 dark:text-orange-400",
-  NotStarted:       "bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-400",
+const VER_META: Record<string, { bg: string; text: string }> = {
+  Success:          { bg: "rgba(16,185,129,0.1)",  text: "#10b981" },
+  Pending:          { bg: "rgba(245,158,11,0.1)",  text: "#f59e0b" },
+  Failed:           { bg: "rgba(239,68,68,0.1)",   text: "#ef4444" },
+  TemporaryFailure: { bg: "rgba(249,115,22,0.1)",  text: "#f97316" },
+  NotStarted:       { bg: "var(--bg-subtle)",       text: "var(--text-tertiary)" },
 };
 
 function VerificationBadge({ status }: { status: string }) {
-  const cls = VERIFICATION_COLORS[status] ?? VERIFICATION_COLORS.NotStarted;
-  return (
-    <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${cls}`}>
-      {status || "—"}
-    </span>
-  );
+  const c = VER_META[status] ?? VER_META.NotStarted;
+  return <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold" style={{ background: c.bg, color: c.text }}>{status || "—"}</span>;
 }
 
 function UsageBar({ sent, max }: { sent: number; max: number }) {
-  if (max <= 0) return <span className="text-xs text-slate-400">—</span>;
+  if (max <= 0) return <span className="text-[12px]" style={{ color: "var(--text-tertiary)" }}>—</span>;
   const pct = Math.min(100, (sent / max) * 100);
-  const color = pct >= 90 ? "bg-red-500" : pct >= 70 ? "bg-amber-400" : "bg-emerald-500";
+  const barColor = pct >= 90 ? "#ef4444" : pct >= 70 ? "#f59e0b" : "#10b981";
   return (
     <div className="flex items-center gap-2 min-w-[120px]">
-      <div className="flex-1 h-1.5 bg-slate-200 dark:bg-slate-700 rounded-full overflow-hidden">
-        <div className={`h-full rounded-full ${color}`} style={{ width: `${pct}%` }} />
+      <div className="flex-1 h-1.5 rounded-full overflow-hidden" style={{ background: "var(--bg-muted)" }}>
+        <div className="h-full rounded-full transition-all" style={{ width: `${pct}%`, background: barColor }} />
       </div>
-      <span className="text-xs text-slate-500 dark:text-slate-400 whitespace-nowrap tabular-nums">
-        {pct.toFixed(1)}%
-      </span>
+      <span className="text-[12px] tabular-nums whitespace-nowrap" style={{ color: "var(--text-secondary)" }}>{pct.toFixed(1)}%</span>
     </div>
   );
 }
 
-// ── CopyButton ─────────────────────────────────────────────────────────────
-
 function CopyButton({ text }: { text: string }) {
   const [copied, setCopied] = useState(false);
   return (
-    <button
-      onClick={(e) => { e.stopPropagation(); navigator.clipboard.writeText(text); setCopied(true); setTimeout(() => setCopied(false), 1500); }}
-      className="ml-1.5 transition-opacity text-slate-400 hover:text-slate-600 dark:text-slate-500 dark:hover:text-slate-300"
-    >
-      {copied ? <Check size={12} className="text-emerald-500" /> : <Copy size={12} />}
+    <button onClick={(e) => { e.stopPropagation(); navigator.clipboard.writeText(text); setCopied(true); setTimeout(() => setCopied(false), 1500); }}
+      className="ml-1.5 p-0.5 rounded opacity-0 group-hover/row:opacity-100 transition-opacity duration-150" style={{ color: "var(--text-tertiary)" }}>
+      {copied ? <Check size={11} className="text-emerald-500" /> : <Copy size={11} />}
     </button>
   );
 }
 
-// ── DropdownChip ───────────────────────────────────────────────────────────
+// ── Local DropdownChip ─────────────────────────────────────────────────────
 
-interface DropdownChipProps {
+function DropdownChip({ label, allItems, selectedItems, onChange, renderItem }: {
   label: string; allItems: string[]; selectedItems: string[];
   onChange: (items: string[]) => void; renderItem?: (item: string) => React.ReactNode;
-}
-
-function DropdownChip({ label, allItems, selectedItems, onChange, renderItem }: DropdownChipProps) {
+}) {
   const [open, setOpen] = useState(false);
-  const wrapperRef = useRef<HTMLDivElement>(null);
-
+  const ref = useRef<HTMLDivElement>(null);
   useEffect(() => {
-    const handler = (e: MouseEvent) => {
-      if (wrapperRef.current && !wrapperRef.current.contains(e.target as Node)) setOpen(false);
-    };
-    document.addEventListener("mousedown", handler);
-    return () => document.removeEventListener("mousedown", handler);
+    const h = (e: MouseEvent) => { if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false); };
+    document.addEventListener("mousedown", h); return () => document.removeEventListener("mousedown", h);
   }, []);
-
-  const allSelected = selectedItems.length === 0 || selectedItems.length === allItems.length;
-  const activeCount = selectedItems.length > 0 && selectedItems.length < allItems.length ? selectedItems.length : null;
-  const toggle = (item: string) => {
-    if (selectedItems.includes(item)) onChange(selectedItems.filter((x) => x !== item));
-    else onChange([...selectedItems, item]);
-  };
-
+  const allSel = selectedItems.length === 0 || selectedItems.length === allItems.length;
+  const active = selectedItems.length > 0 && selectedItems.length < allItems.length ? selectedItems.length : null;
+  const toggle = (item: string) => onChange(selectedItems.includes(item) ? selectedItems.filter((x) => x !== item) : [...selectedItems, item]);
   return (
-    <div ref={wrapperRef} className="relative">
-      <button type="button" onClick={() => setOpen((o) => !o)}
-        className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-sm font-medium transition-colors
-          ${activeCount !== null
-            ? "border-blue-400 bg-blue-50 text-blue-700 dark:border-blue-500/60 dark:bg-blue-600/15 dark:text-blue-300"
-            : "border-slate-200 bg-white text-slate-600 hover:border-slate-300 hover:bg-slate-50 dark:border-[#2a2d3a] dark:bg-[#161825] dark:text-slate-300 dark:hover:bg-white/5"}`}>
+    <div ref={ref} className="relative">
+      <button type="button" onClick={() => setOpen((o) => !o)} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[13px] font-medium transition-all duration-150"
+        style={{ background: active !== null ? "rgba(37,99,235,0.08)" : "var(--bg-card)", border: `1px solid ${active !== null ? "rgba(59,130,246,0.45)" : "var(--border)"}`, color: active !== null ? "var(--brand)" : "var(--text-secondary)" }}>
         {label}
-        {activeCount !== null && <span className="rounded-full bg-blue-500 text-white text-xs w-4 h-4 flex items-center justify-center leading-none">{activeCount}</span>}
-        <ChevronDown size={14} className={`transition-transform ${open ? "rotate-180" : ""}`} />
+        {active !== null && <span className="inline-flex items-center justify-center w-4 h-4 rounded-full text-[10px] font-bold text-white bg-blue-600">{active}</span>}
+        <ChevronDown size={13} className={`transition-transform ${open ? "rotate-180" : ""}`} />
       </button>
       {open && (
-        <div className="absolute top-full left-0 mt-1.5 z-50 min-w-[180px] rounded-xl border border-slate-200 bg-white shadow-lg dark:border-[#2a2d3a] dark:bg-[#161825]">
-          <div className="flex items-center gap-3 px-3 pt-2 pb-1.5 border-b border-slate-100 dark:border-[#2a2d3a]">
-            <button type="button" onClick={() => onChange([])} className="text-xs text-blue-500 hover:text-blue-700 dark:text-blue-400">Select all</button>
-            <button type="button" onClick={() => onChange([])} className="text-xs text-slate-400 hover:text-slate-600 dark:text-slate-500">Clear</button>
+        <div className="absolute top-full left-0 mt-1.5 z-50 min-w-[180px] rounded-xl overflow-hidden"
+          style={{ background: "var(--bg-card)", border: "1px solid var(--border)", boxShadow: "0 8px 32px rgba(0,0,0,0.14)" }}>
+          <div className="flex items-center gap-3 px-3 pt-2.5 pb-2" style={{ borderBottom: "1px solid var(--border)" }}>
+            <button type="button" onClick={() => onChange([])} className="text-[11px] font-medium text-blue-500">Select all</button>
+            <button type="button" onClick={() => onChange([])} className="text-[11px]" style={{ color: "var(--text-tertiary)" }}>Clear</button>
           </div>
           <ul className="py-1 max-h-56 overflow-y-auto">
             {allItems.map((item) => (
               <li key={item}>
-                <label className="flex items-center gap-2.5 px-3 py-1.5 cursor-pointer hover:bg-slate-50 dark:hover:bg-white/5">
-                  <input type="checkbox" checked={allSelected ? true : selectedItems.includes(item)} onChange={() => toggle(item)} className="accent-blue-500 w-3.5 h-3.5 shrink-0" />
-                  {renderItem ? renderItem(item) : <span className="text-sm text-slate-700 dark:text-slate-200 truncate">{item}</span>}
+                <label className="flex items-center gap-2.5 px-3 py-1.5 cursor-pointer select-none"
+                  onMouseEnter={(e) => ((e.currentTarget as HTMLElement).style.background = "var(--bg-subtle)")}
+                  onMouseLeave={(e) => ((e.currentTarget as HTMLElement).style.background = "transparent")}>
+                  <input type="checkbox" checked={allSel ? true : selectedItems.includes(item)} onChange={() => toggle(item)} className="accent-blue-500 w-3.5 h-3.5 shrink-0" />
+                  {renderItem ? renderItem(item) : <span className="text-[13px]" style={{ color: "var(--text-primary)" }}>{item}</span>}
                 </label>
               </li>
             ))}
@@ -125,89 +101,65 @@ function DropdownChip({ label, allItems, selectedItems, onChange, renderItem }: 
   );
 }
 
-// ── SES Identity Drawer ────────────────────────────────────────────────────
+// ── Drawers & Tables ───────────────────────────────────────────────────────
+
+function DrawerRow({ label, value }: { label: string; value: React.ReactNode }) {
+  return (
+    <div className="flex justify-between gap-4 py-2.5 border-b last:border-0" style={{ borderColor: "var(--border)" }}>
+      <dt className="text-[13px] shrink-0" style={{ color: "var(--text-tertiary)" }}>{label}</dt>
+      <dd className="text-[13px] text-right break-all" style={{ color: "var(--text-primary)" }}>{value ?? "—"}</dd>
+    </div>
+  );
+}
 
 function SESDrawer({ identity, onClose }: { identity: SESIdentity | null; onClose: () => void }) {
   return (
     <SlideOverDrawer isOpen={!!identity} onClose={onClose} title={identity ? identity.Identity : ""}>
       {identity && (
-        <div className="space-y-6 text-sm">
-          <div>
-            <p className="text-xs uppercase tracking-widest text-slate-400 dark:text-slate-500 mb-2">Identity</p>
-            <dl className="space-y-2">
-              <div className="flex justify-between gap-4">
-                <dt className="text-slate-500 dark:text-slate-400 shrink-0">Identity</dt>
-                <dd className="font-mono text-xs text-slate-700 dark:text-slate-200 text-right break-all flex items-center gap-1">{identity.Identity}<CopyButton text={identity.Identity} /></dd>
-              </div>
-              <div className="flex justify-between gap-4">
-                <dt className="text-slate-500 dark:text-slate-400 shrink-0">Type</dt>
-                <dd><span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${identity.IdentityType === "Domain" ? "bg-violet-100 text-violet-700 dark:bg-violet-950/40 dark:text-violet-300" : "bg-blue-100 text-blue-700 dark:bg-blue-950/40 dark:text-blue-300"}`}>{identity.IdentityType}</span></dd>
-              </div>
-              <div className="flex justify-between gap-4">
-                <dt className="text-slate-500 dark:text-slate-400 shrink-0">Verification</dt>
-                <dd><VerificationBadge status={identity.VerificationStatus} /></dd>
-              </div>
-            </dl>
-          </div>
-          <div>
-            <p className="text-xs uppercase tracking-widest text-slate-400 dark:text-slate-500 mb-2">Deployment</p>
-            <dl className="space-y-2">
-              <div className="flex justify-between gap-4">
-                <dt className="text-slate-500 dark:text-slate-400 shrink-0">Profile</dt>
-                <dd><ProfileBadge profile={identity.Profile} color={identity.ProfileColor} envTag={identity.ProfileEnvTag} /></dd>
-              </div>
-              <div className="flex justify-between gap-4">
-                <dt className="text-slate-500 dark:text-slate-400 shrink-0">Region</dt>
-                <dd className="text-slate-600 dark:text-slate-300 text-xs font-mono">{identity.Region}</dd>
-              </div>
-            </dl>
-          </div>
-          <div>
-            <p className="text-xs uppercase tracking-widest text-slate-400 dark:text-slate-500 mb-2">DKIM</p>
-            <dl className="space-y-2">
-              <div className="flex justify-between gap-4">
-                <dt className="text-slate-500 dark:text-slate-400 shrink-0">DKIM Signing</dt>
-                <dd>{identity.DkimEnabled ? <span className="text-xs font-medium text-emerald-600 dark:text-emerald-400">Enabled</span> : <span className="text-xs font-medium text-slate-400">Disabled</span>}</dd>
-              </div>
-              {identity.DkimEnabled && (
-                <div className="flex justify-between gap-4">
-                  <dt className="text-slate-500 dark:text-slate-400 shrink-0">DKIM Status</dt>
-                  <dd><VerificationBadge status={identity.DkimVerificationStatus} /></dd>
-                </div>
-              )}
-            </dl>
-          </div>
-          <div>
-            <p className="text-xs uppercase tracking-widest text-slate-400 dark:text-slate-500 mb-2">Notifications</p>
-            <dl className="space-y-2">
-              <div className="flex justify-between gap-4"><dt className="text-slate-500 dark:text-slate-400 shrink-0">Bounce SNS Topic</dt><dd className="font-mono text-xs text-slate-600 dark:text-slate-300 text-right break-all">{identity.BounceTopicArn ?? "—"}</dd></div>
-              <div className="flex justify-between gap-4"><dt className="text-slate-500 dark:text-slate-400 shrink-0">Complaint SNS Topic</dt><dd className="font-mono text-xs text-slate-600 dark:text-slate-300 text-right break-all">{identity.ComplaintTopicArn ?? "—"}</dd></div>
-              <div className="flex justify-between gap-4"><dt className="text-slate-500 dark:text-slate-400 shrink-0">Delivery SNS Topic</dt><dd className="font-mono text-xs text-slate-600 dark:text-slate-300 text-right break-all">{identity.DeliveryTopicArn ?? "—"}</dd></div>
-              <div className="flex justify-between gap-4">
-                <dt className="text-slate-500 dark:text-slate-400 shrink-0">Email Forwarding</dt>
-                <dd>{identity.ForwardingEnabled ? <span className="text-xs text-emerald-600 dark:text-emerald-400">Enabled</span> : <span className="text-xs text-slate-400">Disabled</span>}</dd>
-              </div>
-            </dl>
-          </div>
+        <div>
+          <p className="text-[11px] font-semibold uppercase tracking-wider mb-3" style={{ color: "var(--text-tertiary)" }}>Identity</p>
+          <DrawerRow label="Identity" value={<span className="font-mono text-[12px] flex items-center gap-1">{identity.Identity}<button onClick={() => navigator.clipboard.writeText(identity.Identity)} style={{ color: "var(--text-tertiary)" }}><Copy size={10} /></button></span>} />
+          <DrawerRow label="Type" value={<span className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-medium" style={{ background: identity.IdentityType === "Domain" ? "rgba(139,92,246,0.1)" : "rgba(37,99,235,0.1)", color: identity.IdentityType === "Domain" ? "#8b5cf6" : "var(--brand)" }}>{identity.IdentityType}</span>} />
+          <DrawerRow label="Verification" value={<VerificationBadge status={identity.VerificationStatus} />} />
+
+          <p className="text-[11px] font-semibold uppercase tracking-wider mb-3 mt-5" style={{ color: "var(--text-tertiary)" }}>Deployment</p>
+          <DrawerRow label="Profile" value={<ProfileBadge profile={identity.Profile} color={identity.ProfileColor} envTag={identity.ProfileEnvTag} />} />
+          <DrawerRow label="Region" value={<span className="font-mono text-[12px]">{identity.Region}</span>} />
+
+          <p className="text-[11px] font-semibold uppercase tracking-wider mb-3 mt-5" style={{ color: "var(--text-tertiary)" }}>DKIM</p>
+          <DrawerRow label="DKIM Signing" value={identity.DkimEnabled ? <span style={{ color: "#10b981", fontWeight: 600 }}>Enabled</span> : <span style={{ color: "var(--text-tertiary)" }}>Disabled</span>} />
+          {identity.DkimEnabled && <DrawerRow label="DKIM Status" value={<VerificationBadge status={identity.DkimVerificationStatus} />} />}
+
+          <p className="text-[11px] font-semibold uppercase tracking-wider mb-3 mt-5" style={{ color: "var(--text-tertiary)" }}>Notifications</p>
+          <DrawerRow label="Bounce SNS Topic" value={<span className="font-mono text-[11px] break-all">{identity.BounceTopicArn ?? "—"}</span>} />
+          <DrawerRow label="Complaint SNS Topic" value={<span className="font-mono text-[11px] break-all">{identity.ComplaintTopicArn ?? "—"}</span>} />
+          <DrawerRow label="Delivery SNS Topic" value={<span className="font-mono text-[11px] break-all">{identity.DeliveryTopicArn ?? "—"}</span>} />
+          <DrawerRow label="Email Forwarding" value={identity.ForwardingEnabled ? <span style={{ color: "#10b981" }}>Enabled</span> : <span style={{ color: "var(--text-tertiary)" }}>Disabled</span>} />
         </div>
       )}
     </SlideOverDrawer>
   );
 }
 
+// ── Table helpers ──────────────────────────────────────────────────────────
+
+type SortDir = "asc" | "desc";
+
+function TableWrap({ children }: { children: React.ReactNode }) {
+  return (
+    <div className="rounded-xl overflow-hidden border" style={{ background: "var(--bg-card)", borderColor: "var(--border)", boxShadow: "0 1px 3px rgba(0,0,0,0.06)" }}>
+      <div className="overflow-x-auto"><table className="w-full">{children}</table></div>
+    </div>
+  );
+}
+function SI({ col, sortKey, sortDir }: { col: string; sortKey: string; sortDir: SortDir }) {
+  if (col !== sortKey) return <ChevronsUpDown size={12} style={{ color: "var(--text-tertiary)" }} />;
+  return sortDir === "asc" ? <ChevronUp size={12} style={{ color: "var(--brand)" }} /> : <ChevronDown size={12} style={{ color: "var(--brand)" }} />;
+}
+
 // ── Identities Table ───────────────────────────────────────────────────────
 
 type IdSortKey = "Identity" | "IdentityType" | "Profile" | "Region" | "VerificationStatus" | "DkimVerificationStatus";
-type SortDir = "asc" | "desc";
-
-const ID_COLUMNS: { key: IdSortKey; label: string }[] = [
-  { key: "Identity",               label: "Identity" },
-  { key: "IdentityType",           label: "Type" },
-  { key: "Profile",                label: "Profile" },
-  { key: "Region",                 label: "Region" },
-  { key: "VerificationStatus",     label: "Verification" },
-  { key: "DkimVerificationStatus", label: "DKIM Status" },
-];
 
 function IdentitiesTable({ identities, loading, onClearFilters, hasActiveFilters, page, pageSize, onRowClick }: {
   identities: SESIdentity[]; loading: boolean; onClearFilters: () => void;
@@ -215,125 +167,114 @@ function IdentitiesTable({ identities, loading, onClearFilters, hasActiveFilters
 }) {
   const [sortKey, setSortKey] = useState<IdSortKey>("Identity");
   const [sortDir, setSortDir] = useState<SortDir>("asc");
-  const handleSort = (key: IdSortKey) => { if (key === sortKey) setSortDir((d) => d === "asc" ? "desc" : "asc"); else { setSortKey(key); setSortDir("asc"); } };
+  const hs = (k: IdSortKey) => { if (k === sortKey) setSortDir((d) => d === "asc" ? "desc" : "asc"); else { setSortKey(k); setSortDir("asc"); } };
   const sorted = [...identities].sort((a, b) => { const cmp = String(a[sortKey] ?? "").localeCompare(String(b[sortKey] ?? "")); return sortDir === "asc" ? cmp : -cmp; });
   const paginated = sorted.slice((page - 1) * pageSize, page * pageSize);
-  const SortIcon = ({ col }: { col: IdSortKey }) => col !== sortKey ? <ChevronsUpDown size={13} className="text-slate-300 dark:text-slate-600" /> : sortDir === "asc" ? <ChevronUp size={13} className="text-blue-500" /> : <ChevronDown size={13} className="text-blue-500" />;
-
+  const COLS: { key: IdSortKey; label: string }[] = [
+    { key: "Identity", label: "Identity" }, { key: "IdentityType", label: "Type" },
+    { key: "Profile", label: "Profile" }, { key: "Region", label: "Region" },
+    { key: "VerificationStatus", label: "Verification" }, { key: "DkimVerificationStatus", label: "DKIM Status" },
+  ];
   if (!loading && sorted.length === 0) return (
-    <div className="flex flex-col items-center justify-center py-20 text-slate-400">
-      <p className="text-lg font-medium text-slate-600 dark:text-slate-300">{hasActiveFilters ? "No identities match the current filters." : "No SES identities found"}</p>
-      {hasActiveFilters ? <button onClick={onClearFilters} className="mt-3 px-4 py-2 rounded-lg text-sm font-medium bg-slate-100 hover:bg-slate-200 text-slate-600 dark:bg-[#2a2d3a] dark:hover:bg-[#33374a] dark:text-slate-300 transition-colors">Clear filters</button>
-        : <p className="text-xs mt-1">No SES identities cached yet — click Refresh to poll AWS</p>}
+    <div className="flex flex-col items-center justify-center py-20 rounded-xl border gap-3" style={{ background: "var(--bg-card)", borderColor: "var(--border)" }}>
+      <p className="text-[14px] font-medium" style={{ color: "var(--text-secondary)" }}>{hasActiveFilters ? "No identities match." : "No SES identities found"}</p>
+      {hasActiveFilters && <button onClick={onClearFilters} className="px-4 py-1.5 rounded-lg text-[13px]" style={{ background: "var(--bg-subtle)", color: "var(--text-secondary)", border: "1px solid var(--border)" }}>Clear filters</button>}
     </div>
   );
-
   return (
-    <div className="rounded-xl border border-slate-200 shadow-sm dark:border-[#2a2d3a] overflow-hidden">
-      <div className="overflow-x-auto">
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="border-b border-slate-200 bg-slate-50 dark:border-[#2a2d3a] dark:bg-[#161825]">
-              {ID_COLUMNS.map((col) => (
-                <th key={col.key} onClick={() => handleSort(col.key)} className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-slate-400 cursor-pointer hover:text-slate-600 select-none whitespace-nowrap dark:text-slate-500 dark:hover:text-slate-300">
-                  <span className="inline-flex items-center gap-1">{col.label}<SortIcon col={col.key} /></span>
-                </th>
-              ))}
-              <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-slate-400 select-none whitespace-nowrap dark:text-slate-500">DKIM Signing</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-slate-100 dark:divide-[#2a2d3a]">
-            {loading ? Array.from({ length: 5 }, (_, i) => <SkeletonRow key={i} columns={7} />) : paginated.map((id) => (
-              <tr key={`${id.Profile}:${id.Region}:${id.Identity}`} onClick={() => onRowClick(id)} className="group bg-white hover:bg-slate-50 transition-colors dark:bg-[#1c1f2e] dark:hover:bg-[#222538] cursor-pointer">
-                <td className="px-4 py-3 font-mono text-xs text-slate-700 dark:text-slate-200 max-w-[220px] w-[220px]">
-                  <div className="flex items-center min-w-0"><span className="truncate" title={id.Identity}>{id.Identity}</span><span className="shrink-0"><CopyButton text={id.Identity} /></span></div>
-                </td>
-                <td className="px-4 py-3 whitespace-nowrap">
-                  <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${id.IdentityType === "Domain" ? "bg-violet-100 text-violet-700 dark:bg-violet-950/40 dark:text-violet-300" : "bg-blue-100 text-blue-700 dark:bg-blue-950/40 dark:text-blue-300"}`}>
-                    {id.IdentityType === "Domain" ? <Globe size={11} className="mr-1" /> : <Mail size={11} className="mr-1" />}{id.IdentityType}
-                  </span>
-                </td>
-                <td className="px-4 py-3 whitespace-nowrap"><ProfileBadge profile={id.Profile} color={id.ProfileColor} envTag={id.ProfileEnvTag} /></td>
-                <td className="px-4 py-3 text-slate-600 whitespace-nowrap dark:text-slate-300 text-xs">{id.Region}</td>
-                <td className="px-4 py-3 whitespace-nowrap"><VerificationBadge status={id.VerificationStatus} /></td>
-                <td className="px-4 py-3 whitespace-nowrap">{id.DkimEnabled ? <VerificationBadge status={id.DkimVerificationStatus} /> : <span className="text-xs text-slate-400">—</span>}</td>
-                <td className="px-4 py-3 whitespace-nowrap">{id.DkimEnabled ? <span title="DKIM signing enabled" className="text-emerald-500"><ShieldCheck size={15} /></span> : <span title="DKIM signing disabled" className="text-red-400"><ShieldOff size={15} /></span>}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-    </div>
+    <TableWrap>
+      <thead>
+        <tr className="border-b" style={{ background: "var(--bg-subtle)", borderColor: "var(--border)" }}>
+          {COLS.map((col) => (
+            <th key={col.key} onClick={() => hs(col.key)} className="px-4 py-3 text-left select-none cursor-pointer whitespace-nowrap">
+              <span className="inline-flex items-center gap-1 text-[11px] font-semibold uppercase tracking-wider" style={{ color: sortKey === col.key ? "var(--brand)" : "var(--text-tertiary)" }}>
+                {col.label}<SI col={col.key} sortKey={sortKey} sortDir={sortDir} />
+              </span>
+            </th>
+          ))}
+          <th className="px-4 py-3 text-[11px] font-semibold uppercase tracking-wider text-left whitespace-nowrap" style={{ color: "var(--text-tertiary)" }}>DKIM Signing</th>
+        </tr>
+      </thead>
+      <tbody>
+        {loading ? Array.from({ length: 5 }, (_, i) => <SkeletonRow key={i} columns={7} />) : paginated.map((id) => (
+          <tr key={`${id.Profile}:${id.Region}:${id.Identity}`} onClick={() => onRowClick(id)}
+            className="group/row border-b table-row-hover cursor-pointer"
+            style={{ background: "var(--bg-card)", borderColor: "var(--border)" }}
+            onMouseEnter={(e) => ((e.currentTarget as HTMLElement).style.background = "var(--bg-subtle)")}
+            onMouseLeave={(e) => ((e.currentTarget as HTMLElement).style.background = "var(--bg-card)")}>
+            <td className="px-4 py-3 max-w-[220px]">
+              <div className="flex items-center min-w-0">
+                <span className="font-mono text-[13px] font-medium truncate" title={id.Identity} style={{ color: "var(--text-primary)" }}>{id.Identity}</span>
+                <CopyButton text={id.Identity} />
+              </div>
+            </td>
+            <td className="px-4 py-3 whitespace-nowrap">
+              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-medium" style={{ background: id.IdentityType === "Domain" ? "rgba(139,92,246,0.1)" : "rgba(37,99,235,0.1)", color: id.IdentityType === "Domain" ? "#8b5cf6" : "var(--brand)" }}>
+                {id.IdentityType === "Domain" ? <Globe size={10} /> : <Mail size={10} />}{id.IdentityType}
+              </span>
+            </td>
+            <td className="px-4 py-3 whitespace-nowrap"><ProfileBadge profile={id.Profile} color={id.ProfileColor} envTag={id.ProfileEnvTag} /></td>
+            <td className="px-4 py-3 whitespace-nowrap text-[13px]" style={{ color: "var(--text-secondary)" }}>{id.Region}</td>
+            <td className="px-4 py-3 whitespace-nowrap"><VerificationBadge status={id.VerificationStatus} /></td>
+            <td className="px-4 py-3 whitespace-nowrap">{id.DkimEnabled ? <VerificationBadge status={id.DkimVerificationStatus} /> : <span className="text-[12px]" style={{ color: "var(--text-tertiary)" }}>—</span>}</td>
+            <td className="px-4 py-3 whitespace-nowrap">
+              {id.DkimEnabled ? <span title="DKIM signing enabled"><ShieldCheck size={15} className="text-emerald-500" /></span> : <span title="DKIM signing disabled"><ShieldOff size={15} className="text-red-400" /></span>}
+            </td>
+          </tr>
+        ))}
+      </tbody>
+    </TableWrap>
   );
 }
 
 // ── Sending Limits Table ───────────────────────────────────────────────────
 
 type QuotaSortKey = "Profile" | "Region" | "Max24HourSend" | "MaxSendRate" | "SentLast24Hours";
-
-const QUOTA_COLUMNS: { key: QuotaSortKey; label: string }[] = [
-  { key: "Profile",          label: "Profile" },
-  { key: "Region",           label: "Region" },
-  { key: "Max24HourSend",    label: "Daily Limit" },
-  { key: "MaxSendRate",      label: "Max Rate (msg/s)" },
-  { key: "SentLast24Hours",  label: "Sent (24h)" },
-];
-
 function SendingLimitsTable({ quotas, loading }: { quotas: SESSendingQuota[]; loading: boolean }) {
   const [sortKey, setSortKey] = useState<QuotaSortKey>("Profile");
   const [sortDir, setSortDir] = useState<SortDir>("asc");
-
-  const handleSort = (key: QuotaSortKey) => { if (key === sortKey) setSortDir((d) => d === "asc" ? "desc" : "asc"); else { setSortKey(key); setSortDir("asc"); } };
-
+  const hs = (k: QuotaSortKey) => { if (k === sortKey) setSortDir((d) => d === "asc" ? "desc" : "asc"); else { setSortKey(k); setSortDir("asc"); } };
   const sorted = [...quotas].sort((a, b) => {
-    const av = a[sortKey] ?? 0;
-    const bv = b[sortKey] ?? 0;
-    if (typeof av === "number") { const cmp = (av as number) - (bv as number); return sortDir === "asc" ? cmp : -cmp; }
-    const cmp = String(av).localeCompare(String(bv)); return sortDir === "asc" ? cmp : -cmp;
+    const av = a[sortKey] ?? 0; const bv = b[sortKey] ?? 0;
+    if (typeof av === "number") { return sortDir === "asc" ? (av - (bv as number)) : ((bv as number) - av); }
+    return sortDir === "asc" ? String(av).localeCompare(String(bv)) : String(bv).localeCompare(String(av));
   });
-
-  const SortIcon = ({ col }: { col: QuotaSortKey }) => col !== sortKey ? <ChevronsUpDown size={13} className="text-slate-300 dark:text-slate-600" /> : sortDir === "asc" ? <ChevronUp size={13} className="text-blue-500" /> : <ChevronDown size={13} className="text-blue-500" />;
-
-  if (!loading && sorted.length === 0) return (
-    <div className="flex flex-col items-center justify-center py-20 text-slate-400">
-      <p className="text-lg font-medium">No sending quota data found</p>
-      <p className="text-xs mt-1">Click Refresh to poll AWS</p>
-    </div>
-  );
-
+  const COLS: { key: QuotaSortKey; label: string }[] = [
+    { key: "Profile", label: "Profile" }, { key: "Region", label: "Region" },
+    { key: "Max24HourSend", label: "Daily Limit" }, { key: "MaxSendRate", label: "Max Rate (msg/s)" }, { key: "SentLast24Hours", label: "Sent (24h)" },
+  ];
+  if (!loading && sorted.length === 0) return <div className="flex flex-col items-center justify-center py-20 rounded-xl border" style={{ background: "var(--bg-card)", borderColor: "var(--border)" }}><p className="text-[14px] font-medium" style={{ color: "var(--text-secondary)" }}>No sending quota data found</p></div>;
   return (
-    <div className="rounded-xl border border-slate-200 shadow-sm dark:border-[#2a2d3a] overflow-hidden">
-      <div className="overflow-x-auto">
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="border-b border-slate-200 bg-slate-50 dark:border-[#2a2d3a] dark:bg-[#161825]">
-              {QUOTA_COLUMNS.map((col) => (
-                <th key={col.key} onClick={() => handleSort(col.key)} className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-slate-400 cursor-pointer hover:text-slate-600 select-none whitespace-nowrap dark:text-slate-500 dark:hover:text-slate-300">
-                  <span className="inline-flex items-center gap-1">{col.label}<SortIcon col={col.key} /></span>
-                </th>
-              ))}
-              <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-slate-400 select-none whitespace-nowrap dark:text-slate-500">Usage</th>
+    <TableWrap>
+      <thead>
+        <tr className="border-b" style={{ background: "var(--bg-subtle)", borderColor: "var(--border)" }}>
+          {COLS.map((col) => (
+            <th key={col.key} onClick={() => hs(col.key)} className="px-4 py-3 text-left select-none cursor-pointer whitespace-nowrap">
+              <span className="inline-flex items-center gap-1 text-[11px] font-semibold uppercase tracking-wider" style={{ color: sortKey === col.key ? "var(--brand)" : "var(--text-tertiary)" }}>
+                {col.label}<SI col={col.key} sortKey={sortKey} sortDir={sortDir} />
+              </span>
+            </th>
+          ))}
+          <th className="px-4 py-3 text-[11px] font-semibold uppercase tracking-wider text-left" style={{ color: "var(--text-tertiary)" }}>Usage</th>
+        </tr>
+      </thead>
+      <tbody>
+        {loading ? Array.from({ length: 5 }, (_, i) => <SkeletonRow key={i} columns={6} />) : sorted.map((q) => {
+          const pct = q.Max24HourSend > 0 ? (q.SentLast24Hours / q.Max24HourSend) * 100 : 0;
+          const usageColor = pct >= 90 ? "#ef4444" : pct >= 70 ? "#f59e0b" : "var(--text-secondary)";
+          return (
+            <tr key={`${q.Profile}:${q.Region}`} className="border-b" style={{ background: "var(--bg-card)", borderColor: "var(--border)" }}>
+              <td className="px-4 py-3 whitespace-nowrap"><ProfileBadge profile={q.Profile} color={q.ProfileColor} envTag={q.ProfileEnvTag} /></td>
+              <td className="px-4 py-3 whitespace-nowrap font-mono text-[12px]" style={{ color: "var(--text-secondary)" }}>{q.Region}</td>
+              <td className="px-4 py-3 whitespace-nowrap text-[13px] tabular-nums" style={{ color: "var(--text-secondary)" }}>{q.Max24HourSend.toLocaleString()}</td>
+              <td className="px-4 py-3 whitespace-nowrap text-[13px] tabular-nums" style={{ color: "var(--text-secondary)" }}>{q.MaxSendRate.toLocaleString()}</td>
+              <td className="px-4 py-3 whitespace-nowrap text-[13px] font-medium tabular-nums" style={{ color: usageColor }}>{q.SentLast24Hours.toLocaleString()}</td>
+              <td className="px-4 py-3 min-w-[160px]"><UsageBar sent={q.SentLast24Hours} max={q.Max24HourSend} /></td>
             </tr>
-          </thead>
-          <tbody className="divide-y divide-slate-100 dark:divide-[#2a2d3a]">
-            {loading ? Array.from({ length: 5 }, (_, i) => <SkeletonRow key={i} columns={6} />) : sorted.map((q) => {
-              const usagePct = q.Max24HourSend > 0 ? (q.SentLast24Hours / q.Max24HourSend) * 100 : 0;
-              const usageColor = usagePct >= 90 ? "text-red-600 dark:text-red-400" : usagePct >= 70 ? "text-amber-600 dark:text-amber-400" : "text-slate-600 dark:text-slate-300";
-              return (
-                <tr key={`${q.Profile}:${q.Region}`} className="bg-white hover:bg-slate-50 transition-colors dark:bg-[#1c1f2e] dark:hover:bg-[#222538]">
-                  <td className="px-4 py-3 whitespace-nowrap"><ProfileBadge profile={q.Profile} color={q.ProfileColor} envTag={q.ProfileEnvTag} /></td>
-                  <td className="px-4 py-3 text-slate-600 whitespace-nowrap dark:text-slate-300 text-xs font-mono">{q.Region}</td>
-                  <td className="px-4 py-3 whitespace-nowrap text-xs text-slate-600 dark:text-slate-300 tabular-nums">{q.Max24HourSend.toLocaleString()}</td>
-                  <td className="px-4 py-3 whitespace-nowrap text-xs text-slate-600 dark:text-slate-300 tabular-nums">{q.MaxSendRate.toLocaleString()}</td>
-                  <td className={`px-4 py-3 whitespace-nowrap text-xs font-medium tabular-nums ${usageColor}`}>{q.SentLast24Hours.toLocaleString()}</td>
-                  <td className="px-4 py-3 min-w-[160px]"><UsageBar sent={q.SentLast24Hours} max={q.Max24HourSend} /></td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-      </div>
-    </div>
+          );
+        })}
+      </tbody>
+    </TableWrap>
   );
 }
 
@@ -341,124 +282,83 @@ function SendingLimitsTable({ quotas, loading }: { quotas: SESSendingQuota[]; lo
 
 type StatsSortKey = "Profile" | "Region" | "TotalDeliveryAttempts" | "TotalBounces" | "TotalComplaints" | "TotalRejects";
 
-const STATS_COLUMNS: { key: StatsSortKey; label: string }[] = [
-  { key: "Profile",                label: "Profile" },
-  { key: "Region",                 label: "Region" },
-  { key: "TotalDeliveryAttempts",  label: "Delivered (14d)" },
-  { key: "TotalBounces",           label: "Bounces (14d)" },
-  { key: "TotalComplaints",        label: "Complaints (14d)" },
-  { key: "TotalRejects",           label: "Rejects (14d)" },
-];
-
-function BounceRateBar({ value, total, color }: { value: number; total: number; color: string }) {
-  if (total <= 0) return <span className="text-xs text-slate-400">—</span>;
+function RateBar({ value, total }: { value: number; total: number }) {
+  if (total <= 0) return <span className="text-[12px]" style={{ color: "var(--text-tertiary)" }}>—</span>;
   const pct = Math.min(100, (value / total) * 100);
+  const barColor = pct >= 5 ? "#ef4444" : pct >= 2 ? "#f59e0b" : "#10b981";
   return (
     <div className="flex items-center gap-2 min-w-[100px]">
-      <div className="flex-1 h-1.5 bg-slate-200 dark:bg-slate-700 rounded-full overflow-hidden">
-        <div className={`h-full rounded-full ${color}`} style={{ width: `${pct}%` }} />
+      <div className="flex-1 h-1.5 rounded-full overflow-hidden" style={{ background: "var(--bg-muted)" }}>
+        <div className="h-full rounded-full" style={{ width: `${pct}%`, background: barColor }} />
       </div>
-      <span className="text-xs text-slate-500 dark:text-slate-400 whitespace-nowrap tabular-nums">
-        {pct.toFixed(2)}%
-      </span>
+      <span className="text-[12px] tabular-nums whitespace-nowrap" style={{ color: "var(--text-secondary)" }}>{pct.toFixed(2)}%</span>
     </div>
   );
 }
 
 function AccountStatsTable({ stats, loading }: { stats: SESAccountStats[]; loading: boolean }) {
-  const [sortKey, setSortKey]   = useState<StatsSortKey>("Profile");
-  const [sortDir, setSortDir]   = useState<SortDir>("asc");
-
-  const handleSort = (key: StatsSortKey) => {
-    if (key === sortKey) setSortDir((d) => d === "asc" ? "desc" : "asc");
-    else { setSortKey(key); setSortDir("asc"); }
-  };
-
+  const [sortKey, setSortKey] = useState<StatsSortKey>("Profile");
+  const [sortDir, setSortDir] = useState<SortDir>("asc");
+  const hs = (k: StatsSortKey) => { if (k === sortKey) setSortDir((d) => d === "asc" ? "desc" : "asc"); else { setSortKey(k); setSortDir("asc"); } };
   const sorted = [...stats].sort((a, b) => {
-    const av = a[sortKey] ?? 0;
-    const bv = b[sortKey] ?? 0;
-    if (typeof av === "number") { const cmp = (av as number) - (bv as number); return sortDir === "asc" ? cmp : -cmp; }
-    const cmp = String(av).localeCompare(String(bv)); return sortDir === "asc" ? cmp : -cmp;
+    const av = a[sortKey] ?? 0; const bv = b[sortKey] ?? 0;
+    if (typeof av === "number") { return sortDir === "asc" ? (av - (bv as number)) : ((bv as number) - av); }
+    return sortDir === "asc" ? String(av).localeCompare(String(bv)) : String(bv).localeCompare(String(av));
   });
-
-  const SortIcon = ({ col }: { col: StatsSortKey }) =>
-    col !== sortKey ? <ChevronsUpDown size={13} className="text-slate-300 dark:text-slate-600" />
-    : sortDir === "asc" ? <ChevronUp size={13} className="text-blue-500" />
-    : <ChevronDown size={13} className="text-blue-500" />;
-
-  if (!loading && sorted.length === 0) return (
-    <div className="flex flex-col items-center justify-center py-20 text-slate-400">
-      <p className="text-lg font-medium">No account stats data found</p>
-      <p className="text-xs mt-1">Click Refresh to poll AWS</p>
-    </div>
-  );
-
+  const COLS: { key: StatsSortKey; label: string }[] = [
+    { key: "Profile", label: "Profile" }, { key: "Region", label: "Region" },
+    { key: "TotalDeliveryAttempts", label: "Delivered (14d)" }, { key: "TotalBounces", label: "Bounces (14d)" },
+    { key: "TotalComplaints", label: "Complaints (14d)" }, { key: "TotalRejects", label: "Rejects (14d)" },
+  ];
+  if (!loading && sorted.length === 0) return <div className="flex flex-col items-center justify-center py-20 rounded-xl border" style={{ background: "var(--bg-card)", borderColor: "var(--border)" }}><p className="text-[14px] font-medium" style={{ color: "var(--text-secondary)" }}>No account stats found</p></div>;
   return (
-    <div className="rounded-xl border border-slate-200 shadow-sm dark:border-[#2a2d3a] overflow-hidden">
-      <div className="overflow-x-auto">
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="border-b border-slate-200 bg-slate-50 dark:border-[#2a2d3a] dark:bg-[#161825]">
-              {STATS_COLUMNS.map((col) => (
-                <th key={col.key} onClick={() => handleSort(col.key)}
-                  className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-slate-400 cursor-pointer hover:text-slate-600 select-none whitespace-nowrap dark:text-slate-500 dark:hover:text-slate-300">
-                  <span className="inline-flex items-center gap-1">{col.label}<SortIcon col={col.key} /></span>
-                </th>
-              ))}
-              <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-slate-400 select-none whitespace-nowrap dark:text-slate-500">Status</th>
-              <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-slate-400 select-none whitespace-nowrap dark:text-slate-500">Bounce Rate</th>
-              <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-slate-400 select-none whitespace-nowrap dark:text-slate-500">Complaint Rate</th>
+    <TableWrap>
+      <thead>
+        <tr className="border-b" style={{ background: "var(--bg-subtle)", borderColor: "var(--border)" }}>
+          {COLS.map((col) => (
+            <th key={col.key} onClick={() => hs(col.key)} className="px-4 py-3 text-left select-none cursor-pointer whitespace-nowrap">
+              <span className="inline-flex items-center gap-1 text-[11px] font-semibold uppercase tracking-wider" style={{ color: sortKey === col.key ? "var(--brand)" : "var(--text-tertiary)" }}>
+                {col.label}<SI col={col.key} sortKey={sortKey} sortDir={sortDir} />
+              </span>
+            </th>
+          ))}
+          <th className="px-4 py-3 text-[11px] font-semibold uppercase tracking-wider text-left" style={{ color: "var(--text-tertiary)" }}>Status</th>
+          <th className="px-4 py-3 text-[11px] font-semibold uppercase tracking-wider text-left" style={{ color: "var(--text-tertiary)" }}>Bounce Rate</th>
+          <th className="px-4 py-3 text-[11px] font-semibold uppercase tracking-wider text-left" style={{ color: "var(--text-tertiary)" }}>Complaint Rate</th>
+        </tr>
+      </thead>
+      <tbody>
+        {loading ? Array.from({ length: 5 }, (_, i) => <SkeletonRow key={i} columns={9} />) : sorted.map((s) => {
+          const d = s.TotalDeliveryAttempts;
+          const br = d > 0 ? (s.TotalBounces / d) * 100 : 0;
+          const cr = d > 0 ? (s.TotalComplaints / d) * 100 : 0;
+          const bColor = br >= 5 ? "#ef4444" : br >= 2 ? "#f59e0b" : "var(--text-secondary)";
+          const cColor = cr >= 0.1 ? "#ef4444" : cr >= 0.05 ? "#f59e0b" : "var(--text-secondary)";
+          return (
+            <tr key={`${s.Profile}:${s.Region}`} className="border-b" style={{ background: "var(--bg-card)", borderColor: "var(--border)" }}>
+              <td className="px-4 py-3 whitespace-nowrap"><ProfileBadge profile={s.Profile} color={s.ProfileColor} envTag={s.ProfileEnvTag} /></td>
+              <td className="px-4 py-3 whitespace-nowrap font-mono text-[12px]" style={{ color: "var(--text-secondary)" }}>{s.Region}</td>
+              <td className="px-4 py-3 whitespace-nowrap text-[13px] tabular-nums" style={{ color: "var(--text-secondary)" }}>{s.TotalDeliveryAttempts.toLocaleString()}</td>
+              <td className="px-4 py-3 whitespace-nowrap text-[13px] font-medium tabular-nums" style={{ color: bColor }}>{s.TotalBounces.toLocaleString()}</td>
+              <td className="px-4 py-3 whitespace-nowrap text-[13px] font-medium tabular-nums" style={{ color: cColor }}>{s.TotalComplaints.toLocaleString()}</td>
+              <td className="px-4 py-3 whitespace-nowrap text-[13px] tabular-nums" style={{ color: "var(--text-secondary)" }}>{s.TotalRejects.toLocaleString()}</td>
+              <td className="px-4 py-3 whitespace-nowrap">
+                <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-medium" style={{ background: s.InSandbox ? "rgba(245,158,11,0.1)" : "rgba(16,185,129,0.1)", color: s.InSandbox ? "#f59e0b" : "#10b981" }}>
+                  {s.InSandbox ? "Sandbox" : "Production"}
+                </span>
+                {!s.SendingEnabled && <span className="ml-1 inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-medium" style={{ background: "rgba(239,68,68,0.1)", color: "#ef4444" }}>Disabled</span>}
+              </td>
+              <td className="px-4 py-3 min-w-[120px]"><RateBar value={s.TotalBounces} total={d} /></td>
+              <td className="px-4 py-3 min-w-[120px]"><RateBar value={s.TotalComplaints} total={d} /></td>
             </tr>
-          </thead>
-          <tbody className="divide-y divide-slate-100 dark:divide-[#2a2d3a]">
-            {loading ? Array.from({ length: 5 }, (_, i) => <SkeletonRow key={i} columns={9} />) : sorted.map((s) => {
-              const delivered = s.TotalDeliveryAttempts;
-              const bounceRate    = delivered > 0 ? (s.TotalBounces    / delivered) * 100 : 0;
-              const complaintRate = delivered > 0 ? (s.TotalComplaints / delivered) * 100 : 0;
-              const bounceColor    = bounceRate    >= 5   ? "text-red-600 dark:text-red-400"    : bounceRate    >= 2   ? "text-amber-600 dark:text-amber-400" : "text-slate-600 dark:text-slate-300";
-              const complaintColor = complaintRate >= 0.1 ? "text-red-600 dark:text-red-400"    : complaintRate >= 0.05 ? "text-amber-600 dark:text-amber-400" : "text-slate-600 dark:text-slate-300";
-              return (
-                <tr key={`${s.Profile}:${s.Region}`} className="bg-white hover:bg-slate-50 transition-colors dark:bg-[#1c1f2e] dark:hover:bg-[#222538]">
-                  <td className="px-4 py-3 whitespace-nowrap"><ProfileBadge profile={s.Profile} color={s.ProfileColor} envTag={s.ProfileEnvTag} /></td>
-                  <td className="px-4 py-3 text-slate-600 whitespace-nowrap dark:text-slate-300 text-xs font-mono">{s.Region}</td>
-                  <td className="px-4 py-3 whitespace-nowrap text-xs text-slate-600 dark:text-slate-300 tabular-nums">{s.TotalDeliveryAttempts.toLocaleString()}</td>
-                  <td className={`px-4 py-3 whitespace-nowrap text-xs font-medium tabular-nums ${bounceColor}`}>{s.TotalBounces.toLocaleString()}</td>
-                  <td className={`px-4 py-3 whitespace-nowrap text-xs font-medium tabular-nums ${complaintColor}`}>{s.TotalComplaints.toLocaleString()}</td>
-                  <td className="px-4 py-3 whitespace-nowrap text-xs text-slate-600 dark:text-slate-300 tabular-nums">{s.TotalRejects.toLocaleString()}</td>
-                  <td className="px-4 py-3 whitespace-nowrap">
-                    <div className="flex flex-col gap-1">
-                      <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium w-fit
-                        ${s.InSandbox
-                          ? "bg-amber-100 text-amber-700 dark:bg-amber-950/40 dark:text-amber-400"
-                          : "bg-emerald-100 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-400"}`}>
-                        {s.InSandbox ? "Sandbox" : "Production"}
-                      </span>
-                      {!s.SendingEnabled && (
-                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-600 dark:bg-red-950/40 dark:text-red-400 w-fit">
-                          Sending disabled
-                        </span>
-                      )}
-                    </div>
-                  </td>
-                  <td className="px-4 py-3 min-w-[140px]">
-                    <BounceRateBar value={s.TotalBounces} total={delivered}
-                      color={bounceRate >= 5 ? "bg-red-500" : bounceRate >= 2 ? "bg-amber-400" : "bg-emerald-500"} />
-                  </td>
-                  <td className="px-4 py-3 min-w-[140px]">
-                    <BounceRateBar value={s.TotalComplaints} total={delivered}
-                      color={complaintRate >= 0.1 ? "bg-red-500" : complaintRate >= 0.05 ? "bg-amber-400" : "bg-emerald-500"} />
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-      </div>
-    </div>
+          );
+        })}
+      </tbody>
+    </TableWrap>
   );
 }
 
-// ── SESDashboard ───────────────────────────────────────────────────────────
+// ── Main ────────────────────────────────────────────────────────────────────
 
 type ActiveTab = "identities" | "sending-limits" | "account-stats";
 
@@ -469,38 +369,13 @@ export default function SESDashboard() {
   const [selectedIdentity, setSelectedIdentity] = useState<SESIdentity | null>(null);
   const [activeTab, setActiveTab] = useState<ActiveTab>("identities");
 
-  const beforeRefresh = useCallback(async () => {
-    await triggerSchedulerPoll();
-    await new Promise((r) => setTimeout(r, 2000));
-  }, []);
+  const beforeRefresh = useCallback(async () => { await triggerSchedulerPoll(); await new Promise((r) => setTimeout(r, 2000)); }, []);
+  const fetchAll = useCallback(() => Promise.all([fetchSESIdentities(), fetchSESSendingQuotas(), fetchSESAccountStats()]), []);
+  const onData = useCallback(([i, q, s]: [SESIdentity[], SESSendingQuota[], SESAccountStats[]]) => { setIdentities(i); setQuotas(q); setAccountStats(s); }, []);
+  const { loading, error, lastUpdated, refreshing, load } = useResourceLoad({ fetcher: fetchAll, onData, beforeRefresh });
 
-  const fetchSesData = useCallback(
-    () => Promise.all([fetchSESIdentities(), fetchSESSendingQuotas(), fetchSESAccountStats()]),
-    [],
-  );
-
-  const onSesData = useCallback(([idData, quotaData, statsData]: [SESIdentity[], SESSendingQuota[], SESAccountStats[]]) => {
-    setIdentities(idData);
-    setQuotas(quotaData);
-    setAccountStats(statsData);
-  }, []);
-
-  const { loading, error, lastUpdated, refreshing, load } = useResourceLoad({
-    fetcher: fetchSesData,
-    onData: onSesData,
-    beforeRefresh,
-  });
-
-  // Identity filters
-  const [search, setSearch] = useState("");
-  const [selectedProfiles, setSelectedProfiles] = useState<string[]>([]);
-  const [selectedRegions, setSelectedRegions] = useState<string[]>([]);
-  const [selectedTypes, setSelectedTypes] = useState<string[]>([]);
-  const [selectedStatuses, setSelectedStatuses] = useState<string[]>([]);
-  const [page, setPage] = useState(1);
-  const [pageSize, setPageSize] = useState<PageSize>(10);
-
-  // ── Derived ──────────────────────────────────────────────────────────────
+  const [search, setSearch] = useState(""); const [selProfiles, setSelProfiles] = useState<string[]>([]); const [selRegions, setSelRegions] = useState<string[]>([]); const [selTypes, setSelTypes] = useState<string[]>([]); const [selStatuses, setSelStatuses] = useState<string[]>([]);
+  const [page, setPage] = useState(1); const [pageSize, setPageSize] = useState<PageSize>(10);
 
   const allProfiles = [...new Set(identities.map((d) => d.Profile))].sort();
   const allRegions  = [...new Set(identities.map((d) => d.Region))].sort();
@@ -508,150 +383,95 @@ export default function SESDashboard() {
   const allStatuses = [...new Set(identities.map((d) => d.VerificationStatus))].sort();
   const profileColorMap = Object.fromEntries(identities.map((d) => [d.Profile, d.ProfileColor]));
 
-  const total         = identities.length;
-  const verifiedCount = identities.filter((d) => d.VerificationStatus === "Success").length;
-
-  // Aggregate quota stats across all regions/profiles
   const totalMax24h  = quotas.reduce((s, q) => s + q.Max24HourSend, 0);
   const totalSent24h = quotas.reduce((s, q) => s + q.SentLast24Hours, 0);
-
-  // Aggregate account stats
   const productionCount = accountStats.filter((s) => !s.InSandbox).length;
   const sandboxCount    = accountStats.filter((s) => s.InSandbox).length;
   const totalBounces    = accountStats.reduce((s, r) => s + r.TotalBounces, 0);
   const totalDelivered  = accountStats.reduce((s, r) => s + r.TotalDeliveryAttempts, 0);
 
-  const filtered = identities.filter((d) => {
-    const matchProfile = selectedProfiles.length === 0 || selectedProfiles.includes(d.Profile);
-    const matchRegion  = selectedRegions.length === 0  || selectedRegions.includes(d.Region);
-    const matchType    = selectedTypes.length === 0    || selectedTypes.includes(d.IdentityType);
-    const matchStatus  = selectedStatuses.length === 0 || selectedStatuses.includes(d.VerificationStatus);
-    const matchSearch  = !search || d.Identity.toLowerCase().includes(search.toLowerCase());
-    return matchProfile && matchRegion && matchType && matchStatus && matchSearch;
-  });
+  const filtered = identities.filter((d) =>
+    (selProfiles.length === 0 || selProfiles.includes(d.Profile)) &&
+    (selRegions.length === 0  || selRegions.includes(d.Region)) &&
+    (selTypes.length === 0    || selTypes.includes(d.IdentityType)) &&
+    (selStatuses.length === 0 || selStatuses.includes(d.VerificationStatus)) &&
+    (!search || d.Identity.toLowerCase().includes(search.toLowerCase()))
+  );
 
-  const hasActiveFilters =
-    search.trim() !== "" ||
-    (selectedProfiles.length > 0 && selectedProfiles.length < allProfiles.length) ||
-    (selectedRegions.length > 0 && selectedRegions.length < allRegions.length) ||
-    (selectedTypes.length > 0 && selectedTypes.length < allTypes.length) ||
-    (selectedStatuses.length > 0 && selectedStatuses.length < allStatuses.length);
-
-  const handleClearAll = () => {
-    setSearch("");
-    setSelectedProfiles([...new Set(identities.map((d) => d.Profile))]);
-    setSelectedRegions([...new Set(identities.map((d) => d.Region))]);
-    setSelectedTypes([...new Set(identities.map((d) => d.IdentityType))]);
-    setSelectedStatuses([...new Set(identities.map((d) => d.VerificationStatus))]);
-    setPage(1);
-  };
-
-  const tabCls = (t: ActiveTab) =>
-    t === activeTab
-      ? "px-4 py-2 text-sm font-medium border-b-2 border-blue-500 text-slate-900 dark:text-white transition-colors"
-      : "px-4 py-2 text-sm text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200 border-b-2 border-transparent transition-colors";
+  const hasActiveFilters = search.trim() !== "" || (selProfiles.length > 0 && selProfiles.length < allProfiles.length) || (selRegions.length > 0 && selRegions.length < allRegions.length) || (selTypes.length > 0 && selTypes.length < allTypes.length) || (selStatuses.length > 0 && selStatuses.length < allStatuses.length);
+  const handleClearAll = () => { setSearch(""); setSelProfiles([]); setSelRegions([]); setSelTypes([]); setSelStatuses([]); setPage(1); };
+  const tabCls = (t: ActiveTab) => `px-4 py-2.5 text-[13px] font-medium transition-colors duration-150 border-b-2 ${activeTab === t ? "border-blue-500" : "border-transparent"}`;
 
   return (
-    <div className="p-6 overflow-auto bg-slate-100 dark:bg-[#0f1117] min-h-full">
+    <div className="p-6 min-h-full" style={{ background: "var(--bg-page)" }}>
       <SESDrawer identity={selectedIdentity} onClose={() => setSelectedIdentity(null)} />
 
-      {/* ── Page header ── */}
       <div className="flex items-center justify-between mb-6">
         <div>
-          <h2 className="text-lg font-semibold text-slate-900 dark:text-white">SES</h2>
-          {lastUpdated && (
-            <p className="text-xs text-slate-400 mt-0.5">Synced {lastUpdated.toLocaleTimeString()}</p>
-          )}
+          <h1 className="text-[20px] font-bold tracking-tight" style={{ color: "var(--text-primary)" }}>SES</h1>
+          {lastUpdated && <p className="text-[13px] mt-0.5" style={{ color: "var(--text-tertiary)" }}>Synced {lastUpdated.toLocaleTimeString()}</p>}
         </div>
-        <button onClick={() => load(true)} disabled={refreshing}
-          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium border border-slate-200 bg-white text-slate-600 hover:bg-slate-50 disabled:opacity-50 transition-colors dark:border-[#2a2d3a] dark:bg-[#161825] dark:text-slate-300 dark:hover:bg-white/5">
-          <RefreshCw size={14} className={refreshing ? "animate-spin" : ""} />
-          {refreshing ? "Polling AWS…" : "Refresh"}
+        <button onClick={() => load(true)} disabled={refreshing} className="flex items-center gap-2 px-3 py-2 rounded-lg text-[13px] font-medium transition-colors duration-150 disabled:opacity-50" style={{ background: "var(--bg-card)", border: "1px solid var(--border)", color: "var(--text-secondary)" }}>
+          <RefreshCw size={14} className={refreshing ? "animate-spin" : ""} />{refreshing ? "Polling AWS…" : "Refresh"}
         </button>
       </div>
 
-      {/* ── Stat cards ── */}
       <div className="grid grid-cols-5 gap-4 mb-6">
-        <StatCard label="Total Identities" value={loading ? 0 : total}             total={total}    color="blue"   icon={<Mail size={20} />} />
-        <StatCard label="Verified"         value={loading ? 0 : verifiedCount}     total={total}    color="green"  icon={<ShieldCheck size={20} />} />
-        <StatCard label="Production"       value={loading ? 0 : productionCount}   total={accountStats.length} color="green"  icon={<ShieldCheck size={20} />}
-          ratio={accountStats.length > 0 ? `${sandboxCount} sandbox` : undefined} />
-        <StatCard label="Bounces (14d)"    value={loading ? 0 : totalBounces}      total={totalDelivered} color="red"
-          icon={<AlertTriangle size={20} />}
-          ratio={totalDelivered > 0 ? `${((totalBounces / totalDelivered) * 100).toFixed(2)}% rate` : undefined} />
-        <StatCard label="Sent (24h)"       value={loading ? 0 : Math.round(totalSent24h)} total={Math.round(totalMax24h)} color="green" icon={<Gauge size={20} />}
-          ratio={totalMax24h > 0 ? `of ${totalMax24h.toLocaleString()} limit` : undefined} />
+        <StatCard label="Total Identities" value={loading ? 0 : identities.length}  color="blue"  icon={<Mail size={18} />} />
+        <StatCard label="Verified"          value={loading ? 0 : identities.filter((d) => d.VerificationStatus === "Success").length} color="green" icon={<ShieldCheck size={18} />} />
+        <StatCard label="Production"        value={loading ? 0 : productionCount}   color="green" icon={<ShieldCheck size={18} />} ratio={`${sandboxCount} sandbox`} />
+        <StatCard label="Bounces (14d)"     value={loading ? 0 : totalBounces}      color="red"   icon={<AlertTriangle size={18} />} ratio={totalDelivered > 0 ? `${((totalBounces / totalDelivered) * 100).toFixed(2)}% rate` : undefined} />
+        <StatCard label="Sent (24h)"        value={loading ? 0 : Math.round(totalSent24h)} color="blue" icon={<Gauge size={18} />} ratio={totalMax24h > 0 ? `of ${totalMax24h.toLocaleString()} limit` : undefined} />
       </div>
 
-      {/* ── Error banner ── */}
       {error && (
-        <div className="rounded-xl border border-red-200 bg-red-50 dark:border-red-500/30 dark:bg-red-950/20 p-6 text-red-600 dark:text-red-400 mb-4">
-          <p className="font-semibold mb-1">Failed to load SES data</p>
-          <p className="text-sm font-mono opacity-80 mb-3">{error}</p>
-          <button onClick={() => load()} className="text-sm underline hover:no-underline">Try again</button>
+        <div className="rounded-xl border p-5 mb-4" style={{ background: "rgba(239,68,68,0.05)", borderColor: "rgba(239,68,68,0.2)" }}>
+          <p className="text-[14px] font-semibold mb-1" style={{ color: "#ef4444" }}>Failed to load SES data</p>
+          <p className="text-[12px] font-mono mb-2 opacity-80" style={{ color: "#ef4444" }}>{error}</p>
+          <button onClick={() => load()} className="text-[13px] underline" style={{ color: "var(--text-secondary)" }}>Try again</button>
         </div>
       )}
 
-      {/* ── Tabs ── */}
-      <div className="border-b border-slate-200 dark:border-[#2a2d3a] mb-4">
-        <nav className="flex items-center gap-1 -mb-px">
-          <button onClick={() => setActiveTab("identities")} className={tabCls("identities")}>
-            Identities {!loading && <span className="ml-1 text-xs text-slate-400">({identities.length})</span>}
-          </button>
-          <button onClick={() => setActiveTab("sending-limits")} className={tabCls("sending-limits")}>
-            Sending Limits {!loading && <span className="ml-1 text-xs text-slate-400">({quotas.length})</span>}
-          </button>
-          <button onClick={() => setActiveTab("account-stats")} className={tabCls("account-stats")}>
-            Account Stats {!loading && <span className="ml-1 text-xs text-slate-400">({accountStats.length})</span>}
-          </button>
+      <div className="mb-4 border-b" style={{ borderColor: "var(--border)" }}>
+        <nav className="flex items-center -mb-px">
+          {(["identities", "sending-limits", "account-stats"] as ActiveTab[]).map((tab) => (
+            <button key={tab} onClick={() => setActiveTab(tab)} className={tabCls(tab)} style={{ color: activeTab === tab ? "var(--brand)" : "var(--text-secondary)" }}>
+              {tab === "identities" ? "Identities" : tab === "sending-limits" ? "Sending Limits" : "Account Stats"}
+              {!loading && <span className="ml-1.5 text-[11px]" style={{ color: "var(--text-tertiary)" }}>({tab === "identities" ? identities.length : tab === "sending-limits" ? quotas.length : accountStats.length})</span>}
+            </button>
+          ))}
         </nav>
       </div>
 
-      {/* ── Identities tab ── */}
       {activeTab === "identities" && !error && (
         <>
           <div className="flex items-center gap-2 flex-wrap mb-4">
             <div className="relative">
-              <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 dark:text-slate-500 pointer-events-none" />
-              <input type="text" placeholder="Search identities…" value={search}
-                onChange={(e) => { setSearch(e.target.value); setPage(1); }}
-                className="pl-8 pr-3 py-1.5 rounded-lg border border-slate-200 bg-white text-sm text-slate-700 placeholder-slate-400 focus:outline-none focus:border-blue-400 transition-colors dark:border-[#2a2d3a] dark:bg-[#161825] dark:text-slate-200 dark:placeholder-slate-500" />
+              <Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" style={{ color: "var(--text-tertiary)" }} />
+              <input type="text" placeholder="Search identities…" value={search} onChange={(e) => { setSearch(e.target.value); setPage(1); }}
+                className="pl-8 pr-3 py-1.5 rounded-lg text-[13px] focus:outline-none" style={{ background: "var(--bg-card)", border: "1px solid var(--border)", color: "var(--text-primary)", width: 200 }}
+                onFocus={(e) => (e.currentTarget.style.borderColor = "var(--brand)")} onBlur={(e) => (e.currentTarget.style.borderColor = "var(--border)")} />
             </div>
-            <DropdownChip label="Profile" allItems={allProfiles} selectedItems={selectedProfiles}
-              onChange={(v) => { setSelectedProfiles(v); setPage(1); }}
-              renderItem={(name) => (
-                <span className="flex items-center gap-1.5 text-sm text-slate-700 dark:text-slate-200 truncate">
-                  <span className="inline-block w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: profileColorMap[name] ?? "#6366f1" }} />{name}
-                </span>
-              )} />
-            <DropdownChip label="Region"       allItems={allRegions}  selectedItems={selectedRegions}  onChange={(v) => { setSelectedRegions(v);  setPage(1); }} />
-            <DropdownChip label="Type"         allItems={allTypes}    selectedItems={selectedTypes}    onChange={(v) => { setSelectedTypes(v);    setPage(1); }} />
-            <DropdownChip label="Verification" allItems={allStatuses} selectedItems={selectedStatuses} onChange={(v) => { setSelectedStatuses(v); setPage(1); }} />
-            {hasActiveFilters && (
-              <button type="button" onClick={handleClearAll} className="flex items-center gap-1 text-xs text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200 transition-colors">
-                <X size={12} />Clear filters
-              </button>
-            )}
+            <DropdownChip label="Profile" allItems={allProfiles} selectedItems={selProfiles} onChange={(v) => { setSelProfiles(v); setPage(1); }}
+              renderItem={(name) => <span className="flex items-center gap-1.5 text-[13px]" style={{ color: "var(--text-primary)" }}><span className="inline-block w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: profileColorMap[name] ?? "#6366f1" }} />{name}</span>} />
+            <DropdownChip label="Region" allItems={allRegions} selectedItems={selRegions} onChange={(v) => { setSelRegions(v); setPage(1); }} />
+            <DropdownChip label="Type" allItems={allTypes} selectedItems={selTypes} onChange={(v) => { setSelTypes(v); setPage(1); }} />
+            <DropdownChip label="Verification" allItems={allStatuses} selectedItems={selStatuses} onChange={(v) => { setSelStatuses(v); setPage(1); }} />
+            {hasActiveFilters && <button onClick={handleClearAll} className="flex items-center gap-1 text-[12px]" style={{ color: "var(--text-tertiary)" }}><X size={12} />Clear</button>}
             <div className="ml-auto flex items-center gap-3">
-              <span className="text-xs text-slate-400 dark:text-slate-500 whitespace-nowrap">{filtered.length} of {total} identities</span>
-              {total > 0 && <Pagination total={filtered.length} page={page} pageSize={pageSize} onPageChange={setPage} onPageSizeChange={(s) => { setPageSize(s); setPage(1); }} />}
+              <span className="text-[12px]" style={{ color: "var(--text-tertiary)" }}>{filtered.length} of {identities.length} identities</span>
+              {identities.length > 0 && <Pagination total={filtered.length} page={page} pageSize={pageSize} onPageChange={setPage} onPageSizeChange={(s) => { setPageSize(s); setPage(1); }} />}
             </div>
           </div>
           <IdentitiesTable identities={filtered} loading={loading} onClearFilters={handleClearAll} hasActiveFilters={hasActiveFilters} page={page} pageSize={pageSize} onRowClick={setSelectedIdentity} />
         </>
       )}
 
-      {/* ── Sending Limits tab ── */}
-      {activeTab === "sending-limits" && !error && (
-        <SendingLimitsTable quotas={quotas} loading={loading} />
-      )}
+      {activeTab === "sending-limits" && !error && <SendingLimitsTable quotas={quotas} loading={loading} />}
 
-      {/* ── Account Stats tab ── */}
       {activeTab === "account-stats" && !error && (
         <div className="space-y-3">
-          <p className="text-xs text-slate-400 dark:text-slate-500">
-            Bounce and complaint counts cover the last ~14 days (AWS GetSendStatistics). Sandbox accounts are limited to 200 emails/day.
-          </p>
+          <p className="text-[12px]" style={{ color: "var(--text-tertiary)" }}>Bounce and complaint counts cover the last ~14 days. Sandbox accounts are limited to 200 emails/day.</p>
           <AccountStatsTable stats={accountStats} loading={loading} />
         </div>
       )}

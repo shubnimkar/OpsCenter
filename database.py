@@ -137,22 +137,28 @@ def init_db():
             # Stores the last-known Lambda function metadata per profile/region.
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS lambda_cache (
-                    function_name VARCHAR(255) NOT NULL,
-                    profile_name  VARCHAR(255) NOT NULL,
-                    profile_color VARCHAR(20)  NOT NULL DEFAULT '#6366f1',
-                    profile_env   VARCHAR(50)  NOT NULL DEFAULT 'other',
-                    region        VARCHAR(100) NOT NULL,
-                    runtime       VARCHAR(50)  NOT NULL DEFAULT '-',
-                    handler       VARCHAR(255) NOT NULL DEFAULT '-',
-                    state         VARCHAR(50)  NOT NULL DEFAULT '-',
-                    last_modified TIMESTAMPTZ,
-                    code_size     BIGINT       NOT NULL DEFAULT 0,
-                    memory_size   INT          NOT NULL DEFAULT 0,
-                    timeout       INT          NOT NULL DEFAULT 0,
-                    description   TEXT         NOT NULL DEFAULT '',
-                    cached_at     TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+                    function_name        VARCHAR(255) NOT NULL,
+                    profile_name         VARCHAR(255) NOT NULL,
+                    profile_color        VARCHAR(20)  NOT NULL DEFAULT '#6366f1',
+                    profile_env          VARCHAR(50)  NOT NULL DEFAULT 'other',
+                    region               VARCHAR(100) NOT NULL,
+                    runtime              VARCHAR(50)  NOT NULL DEFAULT '-',
+                    handler              VARCHAR(255) NOT NULL DEFAULT '-',
+                    state                VARCHAR(50)  NOT NULL DEFAULT '-',
+                    last_modified        TIMESTAMPTZ,
+                    code_size            BIGINT       NOT NULL DEFAULT 0,
+                    memory_size          INT          NOT NULL DEFAULT 0,
+                    timeout              INT          NOT NULL DEFAULT 0,
+                    description          TEXT         NOT NULL DEFAULT '',
+                    last_invocation_time TIMESTAMPTZ,
+                    cached_at            TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
                     PRIMARY KEY (function_name, profile_name, region)
                 )
+            """)
+            # Migrate: add last_invocation_time to tables created before this feature
+            cur.execute("""
+                ALTER TABLE lambda_cache
+                ADD COLUMN IF NOT EXISTS last_invocation_time TIMESTAMPTZ
             """)
 
             # ── IAM user cache table ───────────────────────────────────────
@@ -441,6 +447,60 @@ def init_db():
             cur.execute("""
                 CREATE INDEX IF NOT EXISTS idx_wmh_website_checked
                     ON website_monitor_history (website_id, checked_at DESC)
+            """)
+
+            # ── Notification alert events ──────────────────────────────────
+            # Dedup log of every fired alert. One active row per
+            # (alert_type, resource_key) — resolved_at NULL means still firing.
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS alert_events (
+                    id           SERIAL       PRIMARY KEY,
+                    alert_type   VARCHAR(50)  NOT NULL,
+                    resource_key VARCHAR(255) NOT NULL,
+                    title        TEXT         NOT NULL,
+                    message      TEXT         NOT NULL,
+                    severity     VARCHAR(20)  NOT NULL DEFAULT 'info',
+                    first_fired  TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+                    last_fired   TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+                    resolved_at  TIMESTAMPTZ,
+                    is_read      BOOLEAN      NOT NULL DEFAULT FALSE,
+                    email_sent   BOOLEAN      NOT NULL DEFAULT FALSE
+                )
+            """)
+            cur.execute("""
+                CREATE INDEX IF NOT EXISTS idx_alert_events_unread
+                    ON alert_events (is_read, first_fired DESC)
+            """)
+            cur.execute("""
+                CREATE INDEX IF NOT EXISTS idx_alert_events_active
+                    ON alert_events (alert_type, resource_key, resolved_at)
+                    WHERE resolved_at IS NULL
+            """)
+
+            # ── Notification settings ──────────────────────────────────────
+            # Single-row table: which SES identity to send from + enabled flag.
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS notification_settings (
+                    id           INT  PRIMARY KEY DEFAULT 1,
+                    sender_email TEXT,
+                    enabled      BOOLEAN NOT NULL DEFAULT FALSE,
+                    CONSTRAINT single_row CHECK (id = 1)
+                )
+            """)
+            cur.execute("""
+                INSERT INTO notification_settings (id) VALUES (1)
+                ON CONFLICT (id) DO NOTHING
+            """)
+
+            # ── Notification recipients ────────────────────────────────────
+            # List of email addresses that receive alerts.
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS notification_recipients (
+                    id         SERIAL       PRIMARY KEY,
+                    email      VARCHAR(255) NOT NULL UNIQUE,
+                    enabled    BOOLEAN      NOT NULL DEFAULT TRUE,
+                    created_at TIMESTAMPTZ  NOT NULL DEFAULT NOW()
+                )
             """)
 
         conn.commit()

@@ -6,18 +6,6 @@ import DropdownFilter from "./DropdownFilter";
 import ClearFiltersButton from "./ClearFiltersButton";
 import type { FilterToolbarProps } from "./types";
 
-/**
- * Unified filter toolbar used by every dashboard.
- *
- * Renders, in order:
- *   SearchFilter (if onSearchChange provided)
- *   → one DropdownFilter per entry in `filters` (in the order given)
- *   → ClearFiltersButton (when hasActiveFilters is true)
- *   → result count + paginationSlot (pushed to the trailing edge)
- *
- * Recommended filter key ordering (omit unused ones):
- *   search | environment | region | status | type | profile
- */
 const FilterToolbar = React.memo(function FilterToolbar({
   filters,
   filterState,
@@ -33,21 +21,10 @@ const FilterToolbar = React.memo(function FilterToolbar({
   paginationSlot,
 }: FilterToolbarProps) {
   return (
-    <div
-      role="toolbar"
-      aria-label="Filter and search"
-      className="flex items-center gap-2 flex-wrap"
-    >
-      {/* Search input */}
+    <div role="toolbar" aria-label="Filter and search" className="flex items-center gap-2 flex-wrap">
       {onSearchChange && (
-        <SearchFilter
-          value={searchValue ?? ""}
-          onChange={onSearchChange}
-          placeholder={searchPlaceholder}
-        />
+        <SearchFilter value={searchValue ?? ""} onChange={onSearchChange} placeholder={searchPlaceholder} />
       )}
-
-      {/* Dynamic dropdown filters */}
       {filters.map((config) => (
         <DropdownFilter
           key={config.key}
@@ -57,15 +34,11 @@ const FilterToolbar = React.memo(function FilterToolbar({
           onChange={(values) => onFilterChange(config.key, values)}
         />
       ))}
-
-      {/* Clear all */}
       <ClearFiltersButton visible={hasActiveFilters} onClear={onClearAll} />
-
-      {/* Spacer + result count + pagination */}
       <div className="ml-auto flex items-center gap-3">
         {resultCount !== undefined && totalCount !== undefined && (
-          <span className="text-xs text-slate-400 dark:text-slate-500 whitespace-nowrap">
-            {resultCount} of {totalCount} {resultLabel}
+          <span className="text-[12px] tabular-nums whitespace-nowrap" style={{ color: "var(--text-tertiary)" }}>
+            {resultCount.toLocaleString()} of {totalCount.toLocaleString()} {resultLabel}
           </span>
         )}
         {paginationSlot}

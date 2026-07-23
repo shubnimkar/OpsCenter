@@ -352,6 +352,30 @@ def poll_s3() -> None:
 # ── Lambda poll ───────────────────────────────────────────────────────────────
 
 
+def _get_lambda_last_invocation(logs_client, function_name: str) -> "datetime | None":
+    """
+    Fetch the timestamp of the most recent Lambda invocation via CloudWatch Logs.
+    Returns a timezone-aware datetime or None if no log data exists.
+    """
+    from datetime import datetime as dt
+    log_group = f"/aws/lambda/{function_name}"
+    try:
+        resp = logs_client.describe_log_streams(
+            logGroupName=log_group,
+            orderBy="LastEventTime",
+            descending=True,
+            limit=1,
+        )
+        streams = resp.get("logStreams", [])
+        if streams and streams[0].get("lastEventTimestamp"):
+            # CloudWatch returns milliseconds since epoch
+            ts_ms = streams[0]["lastEventTimestamp"]
+            return dt.fromtimestamp(ts_ms / 1000, tz=timezone.utc)
+    except Exception:
+        pass
+    return None
+
+
 def _fetch_lambdas_for_profile(profile: dict) -> list[dict]:
     """Call AWS Lambda list_functions for one profile across all its regions."""
     regions = profile.get("regions") or [profile.get("region", "us-east-1")]
@@ -365,6 +389,7 @@ def _fetch_lambdas_for_profile(profile: dict) -> list[dict]:
                 region_name=region,
             )
             lam = session.client("lambda")
+            logs = session.client("logs")
             paginator = lam.get_paginator("list_functions")
 
             for page in paginator.paginate():
@@ -380,20 +405,23 @@ def _fetch_lambdas_for_profile(profile: dict) -> list[dict]:
                         except Exception:
                             last_modified = None
 
+                    last_invocation_time = _get_lambda_last_invocation(logs, fn["FunctionName"])
+
                     rows.append({
-                        "function_name": fn["FunctionName"],
-                        "profile_name":  profile["name"],
-                        "profile_color": profile["color"],
-                        "profile_env":   profile.get("env_tag", "other"),
-                        "region":        region,
-                        "runtime":       fn.get("Runtime", "-"),
-                        "handler":       fn.get("Handler", "-"),
-                        "state":         fn.get("State", "-"),
-                        "last_modified": last_modified,
-                        "code_size":     fn.get("CodeSize", 0),
-                        "memory_size":   fn.get("MemorySize", 0),
-                        "timeout":       fn.get("Timeout", 0),
-                        "description":   fn.get("Description", ""),
+                        "function_name":        fn["FunctionName"],
+                        "profile_name":         profile["name"],
+                        "profile_color":        profile["color"],
+                        "profile_env":          profile.get("env_tag", "other"),
+                        "region":               region,
+                        "runtime":              fn.get("Runtime", "-"),
+                        "handler":              fn.get("Handler", "-"),
+                        "state":                fn.get("State", "-"),
+                        "last_modified":        last_modified,
+                        "code_size":            fn.get("CodeSize", 0),
+                        "memory_size":          fn.get("MemorySize", 0),
+                        "timeout":              fn.get("Timeout", 0),
+                        "description":          fn.get("Description", ""),
+                        "last_invocation_time": last_invocation_time,
                     })
         except (ClientError, NoCredentialsError) as exc:
             logger.warning(
@@ -418,25 +446,27 @@ def _upsert_lambdas(conn, rows: list[dict]) -> None:
                 INSERT INTO lambda_cache
                     (function_name, profile_name, profile_color, profile_env,
                      region, runtime, handler, state,
-                     last_modified, code_size, memory_size, timeout, description, cached_at)
+                     last_modified, code_size, memory_size, timeout, description,
+                     last_invocation_time, cached_at)
                 VALUES
                     (%(function_name)s, %(profile_name)s, %(profile_color)s, %(profile_env)s,
                      %(region)s, %(runtime)s, %(handler)s, %(state)s,
                      %(last_modified)s, %(code_size)s, %(memory_size)s, %(timeout)s,
-                     %(description)s, NOW())
+                     %(description)s, %(last_invocation_time)s, NOW())
                 ON CONFLICT (function_name, profile_name, region)
                 DO UPDATE SET
-                    profile_color = EXCLUDED.profile_color,
-                    profile_env   = EXCLUDED.profile_env,
-                    runtime       = EXCLUDED.runtime,
-                    handler       = EXCLUDED.handler,
-                    state         = EXCLUDED.state,
-                    last_modified = EXCLUDED.last_modified,
-                    code_size     = EXCLUDED.code_size,
-                    memory_size   = EXCLUDED.memory_size,
-                    timeout       = EXCLUDED.timeout,
-                    description   = EXCLUDED.description,
-                    cached_at     = NOW()
+                    profile_color        = EXCLUDED.profile_color,
+                    profile_env          = EXCLUDED.profile_env,
+                    runtime              = EXCLUDED.runtime,
+                    handler              = EXCLUDED.handler,
+                    state                = EXCLUDED.state,
+                    last_modified        = EXCLUDED.last_modified,
+                    code_size            = EXCLUDED.code_size,
+                    memory_size          = EXCLUDED.memory_size,
+                    timeout              = EXCLUDED.timeout,
+                    description          = EXCLUDED.description,
+                    last_invocation_time = EXCLUDED.last_invocation_time,
+                    cached_at            = NOW()
                 """,
                 row,
             )
