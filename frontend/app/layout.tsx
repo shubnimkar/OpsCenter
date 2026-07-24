@@ -1,7 +1,6 @@
 import type { Metadata } from "next";
 import { ThemeProvider } from "@/lib/theme";
-import TopNavbar from "@/components/TopNavbar";
-import Sidebar from "@/components/Sidebar";
+import AppShell from "@/components/AppShell";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -24,15 +23,9 @@ export default function RootLayout({
           rel="stylesheet"
         />
       </head>
-      <body className="min-h-screen" style={{ fontFamily: "Inter, system-ui, -apple-system, sans-serif" }}>
+      <body className="h-screen overflow-hidden" style={{ fontFamily: "Inter, system-ui, -apple-system, sans-serif" }}>
         <ThemeProvider>
-          {/* Top navbar spans full width */}
-          <TopNavbar />
-          {/* Below navbar: sidebar + page content side by side */}
-          <div className="flex" style={{ height: "calc(100vh - 52px)" }}>
-            <Sidebar />
-            <main className="flex-1 min-w-0 overflow-auto">{children}</main>
-          </div>
+          <AppShell>{children}</AppShell>
         </ThemeProvider>
       </body>
     </html>

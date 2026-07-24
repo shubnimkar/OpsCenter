@@ -359,6 +359,19 @@ def evaluate_ssl(domain_id: int, domain_name: str,
             active_expired  = _get_active_event(conn, ALERT_SSL_EXPIRED,  resource_key)
 
             if new_status == "expired":
+                # Resolve warning and critical alerts since they are superseded by expired
+                resolved_any = False
+                for atype in (ALERT_SSL_WARNING, ALERT_SSL_CRITICAL):
+                    eid = _resolve_event(
+                        conn, atype, resource_key,
+                        f"SSL certificate expired: {domain_name}",
+                        f"The SSL certificate for {domain_name} has expired.",
+                    )
+                    if eid:
+                        resolved_any = True
+                if resolved_any:
+                    conn.commit()
+
                 if not active_expired:
                     title   = f"SSL certificate expired: {domain_name}"
                     message = (
@@ -375,6 +388,19 @@ def evaluate_ssl(domain_id: int, domain_name: str,
 
             elif new_status == "expiring_soon" and days_remaining is not None:
                 if days_remaining <= SSL_CRITICAL_DAYS:
+                    # Resolve warning and expired alerts since they are superseded by critical
+                    resolved_any = False
+                    for atype in (ALERT_SSL_WARNING, ALERT_SSL_EXPIRED):
+                        eid = _resolve_event(
+                            conn, atype, resource_key,
+                            f"SSL certificate critical: {domain_name}",
+                            f"The SSL certificate for {domain_name} has entered critical status.",
+                        )
+                        if eid:
+                            resolved_any = True
+                    if resolved_any:
+                        conn.commit()
+
                     if not active_critical:
                         title   = f"SSL expiring in {days_remaining} day(s): {domain_name}"
                         message = (
@@ -393,22 +419,36 @@ def evaluate_ssl(domain_id: int, domain_name: str,
                         )
                         _deliver(conn, event_id, title, message, "critical")
 
-                elif not active_warning:
-                    title   = f"SSL expiring in {days_remaining} day(s): {domain_name}"
-                    message = (
-                        f"The SSL certificate for <b>{domain_name}</b> will expire in "
-                        f"<b>{days_remaining} day(s)</b>. Schedule a renewal soon."
-                    )
-                    event_id = _fire_event(
-                        conn, ALERT_SSL_WARNING, resource_key,
-                        title, message, "warning",
-                    )
-                    conn.commit()
-                    logger.info(
-                        "SSL warning alert fired: %s (%d days) (event_id=%d)",
-                        domain_name, days_remaining, event_id,
-                    )
-                    _deliver(conn, event_id, title, message, "warning")
+                else:
+                    # Resolve critical and expired alerts since they are superseded by warning
+                    resolved_any = False
+                    for atype in (ALERT_SSL_CRITICAL, ALERT_SSL_EXPIRED):
+                        eid = _resolve_event(
+                            conn, atype, resource_key,
+                            f"SSL certificate warning: {domain_name}",
+                            f"The SSL certificate for {domain_name} has entered warning status.",
+                        )
+                        if eid:
+                            resolved_any = True
+                    if resolved_any:
+                        conn.commit()
+
+                    if not active_warning:
+                        title   = f"SSL expiring in {days_remaining} day(s): {domain_name}"
+                        message = (
+                            f"The SSL certificate for <b>{domain_name}</b> will expire in "
+                            f"<b>{days_remaining} day(s)</b>. Schedule a renewal soon."
+                        )
+                        event_id = _fire_event(
+                            conn, ALERT_SSL_WARNING, resource_key,
+                            title, message, "warning",
+                        )
+                        conn.commit()
+                        logger.info(
+                            "SSL warning alert fired: %s (%d days) (event_id=%d)",
+                            domain_name, days_remaining, event_id,
+                        )
+                        _deliver(conn, event_id, title, message, "warning")
 
             elif new_status == "valid":
                 # Cert is now valid — resolve any active alerts

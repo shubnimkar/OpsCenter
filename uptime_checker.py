@@ -28,7 +28,7 @@ from requests.exceptions import (
     RequestException,
 )
 
-from network_guard import validate_http_url
+from network_guard import resolve_and_validate_http_url, dns_resolver_override
 
 logger = logging.getLogger(__name__)
 
@@ -64,7 +64,7 @@ def check_website(
         }
 
     try:
-        url = validate_http_url(url)
+        url, hostname, resolved_ip = resolve_and_validate_http_url(url)
     except ValueError as exc:
         return {
             "status": "offline",
@@ -80,13 +80,46 @@ def check_website(
     body = None
 
     try:
-        response = requests.get(
-            url,
-            timeout=timeout_seconds,
-            allow_redirects=True,
-            headers={"User-Agent": "UptimeMonitor/1.0"},
-            verify=True,  # enforce SSL verification
-        )
+        current_url = url
+        max_redirects = 5
+        redirect_count = 0
+
+        while True:
+            from urllib.parse import urlparse, urljoin
+            parsed_current = urlparse(current_url)
+            current_host = parsed_current.hostname
+            if not current_host:
+                raise RequestException("Invalid redirect URL")
+
+            if redirect_count > 0:
+                from network_guard import assert_hostname_allowed
+                try:
+                    current_ip = assert_hostname_allowed(current_host)
+                except ValueError as exc:
+                    raise RequestException(f"Redirect to unsafe host blocked: {exc}")
+            else:
+                current_ip = resolved_ip
+
+            with dns_resolver_override(current_host, current_ip):
+                response = requests.get(
+                    current_url,
+                    timeout=timeout_seconds,
+                    allow_redirects=False,
+                    headers={"User-Agent": "UptimeMonitor/1.0"},
+                    verify=True,
+                )
+
+            if response.status_code in (301, 302, 303, 307, 308):
+                redirect_target = response.headers.get("Location")
+                if not redirect_target:
+                    break
+                current_url = urljoin(current_url, redirect_target)
+                redirect_count += 1
+                if redirect_count > max_redirects:
+                    raise TooManyRedirects("Too many redirects")
+            else:
+                break
+
         elapsed = time.monotonic() - start
         response_time_ms = int(elapsed * 1000)
         http_status = response.status_code

@@ -38,6 +38,9 @@ _last_purge_hour: int | None = None
 # Module-level reference so api.py can call run_check_for_website()
 _executor = ThreadPoolExecutor(max_workers=MAX_WORKERS, thread_name_prefix="uptime-check")
 
+_active_checks = set()
+_active_checks_lock = threading.Lock()
+
 
 def _maybe_purge_history() -> None:
     """Delete uptime history older than HISTORY_RETENTION_DAYS (once per UTC hour)."""
@@ -72,99 +75,109 @@ def run_check_for_website(website_id: int) -> None:
     Load one website from the DB, run an HTTP health check, and persist the
     result. Called both by the scheduler tick and by the manual refresh endpoint.
     """
-    try:
-        with get_connection() as conn:
-            with conn.cursor() as cur:
-                cur.execute(
-                    """
-                    SELECT id, name, url, expected_status, timeout_seconds,
-                           keyword, maintenance_mode, monitoring_interval
-                    FROM website_monitor
-                    WHERE id = %s
-                    """,
-                    (website_id,),
-                )
-                site = cur.fetchone()
-
-        if not site:
-            logger.warning("uptime: website_id=%d not found — skipping", website_id)
+    with _active_checks_lock:
+        if website_id in _active_checks:
+            logger.debug("uptime: check for website_id=%d already in progress — skipping", website_id)
             return
+        _active_checks.add(website_id)
 
-        result = check_website(
-            url=site["url"],
-            expected_status=site["expected_status"],
-            timeout_seconds=site["timeout_seconds"],
-            keyword=site["keyword"] or None,
-            maintenance_mode=site["maintenance_mode"],
-        )
-
-        now = datetime.now(timezone.utc)
-        next_check = now + timedelta(seconds=site["monitoring_interval"])
-
-        with get_connection() as conn:
-            with conn.cursor() as cur:
-                # Update snapshot on the website row
-                cur.execute(
-                    """
-                    UPDATE website_monitor SET
-                        last_status        = %s,
-                        last_http_status   = %s,
-                        last_response_time = %s,
-                        last_checked_at    = %s,
-                        next_check_at      = %s,
-                        updated_at         = NOW()
-                    WHERE id = %s
-                    """,
-                    (
-                        result["status"],
-                        result["http_status"],
-                        result["response_time_ms"],
-                        now,
-                        next_check,
-                        website_id,
-                    ),
-                )
-                # Append history record
-                cur.execute(
-                    """
-                    INSERT INTO website_monitor_history
-                        (website_id, status, http_status, response_time_ms, error_message, checked_at)
-                    VALUES (%s, %s, %s, %s, %s, %s)
-                    """,
-                    (
-                        website_id,
-                        result["status"],
-                        result["http_status"],
-                        result["response_time_ms"],
-                        result["error_message"],
-                        now,
-                    ),
-                )
-            conn.commit()
-
-        logger.debug(
-            "uptime: id=%d url=%s status=%s http=%s rt=%sms",
-            website_id,
-            site["url"],
-            result["status"],
-            result["http_status"],
-            result["response_time_ms"],
-        )
-
-        # Evaluate notification state after writing the result
+    try:
         try:
-            from notifications import evaluate_uptime
-            evaluate_uptime(
-                website_id=website_id,
-                website_name=site["name"],
-                url=site["url"],
-                new_status=result["status"],
-            )
-        except Exception as notif_exc:
-            logger.warning("uptime: notification eval failed for id=%d: %s", website_id, notif_exc)
+            with get_connection() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        """
+                        SELECT id, name, url, expected_status, timeout_seconds,
+                               keyword, maintenance_mode, monitoring_interval
+                        FROM website_monitor
+                        WHERE id = %s
+                        """,
+                        (website_id,),
+                    )
+                    site = cur.fetchone()
 
-    except Exception as exc:
-        logger.error("uptime: error checking website_id=%d: %s", website_id, exc)
+            if not site:
+                logger.warning("uptime: website_id=%d not found — skipping", website_id)
+                return
+
+            result = check_website(
+                url=site["url"],
+                expected_status=site["expected_status"],
+                timeout_seconds=site["timeout_seconds"],
+                keyword=site["keyword"] or None,
+                maintenance_mode=site["maintenance_mode"],
+            )
+
+            now = datetime.now(timezone.utc)
+            next_check = now + timedelta(seconds=site["monitoring_interval"])
+
+            with get_connection() as conn:
+                with conn.cursor() as cur:
+                    # Update snapshot on the website row
+                    cur.execute(
+                        """
+                        UPDATE website_monitor SET
+                            last_status        = %s,
+                            last_http_status   = %s,
+                            last_response_time = %s,
+                            last_checked_at    = %s,
+                            next_check_at      = %s,
+                            updated_at         = NOW()
+                        WHERE id = %s
+                        """,
+                        (
+                            result["status"],
+                            result["http_status"],
+                            result["response_time_ms"],
+                            now,
+                            next_check,
+                            website_id,
+                        ),
+                    )
+                    # Append history record
+                    cur.execute(
+                        """
+                        INSERT INTO website_monitor_history
+                            (website_id, status, http_status, response_time_ms, error_message, checked_at)
+                        VALUES (%s, %s, %s, %s, %s, %s)
+                        """,
+                        (
+                            website_id,
+                            result["status"],
+                            result["http_status"],
+                            result["response_time_ms"],
+                            result["error_message"],
+                            now,
+                        ),
+                    )
+                conn.commit()
+
+            logger.debug(
+                "uptime: id=%d url=%s status=%s http=%s rt=%sms",
+                website_id,
+                site["url"],
+                result["status"],
+                result["http_status"],
+                result["response_time_ms"],
+            )
+
+            # Evaluate notification state after writing the result
+            try:
+                from notifications import evaluate_uptime
+                evaluate_uptime(
+                    website_id=website_id,
+                    website_name=site["name"],
+                    url=site["url"],
+                    new_status=result["status"],
+                )
+            except Exception as notif_exc:
+                logger.warning("uptime: notification eval failed for id=%d: %s", website_id, notif_exc)
+
+        except Exception as exc:
+            logger.error("uptime: error checking website_id=%d: %s", website_id, exc)
+    finally:
+        with _active_checks_lock:
+            _active_checks.discard(website_id)
 
 
 # ── Scheduler tick ────────────────────────────────────────────────────────────

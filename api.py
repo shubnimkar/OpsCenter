@@ -412,6 +412,26 @@ def test_saved_profile_connection(profile_id: int):
 
 # ── Profiles ──────────────────────────────────────────────────────────────────
 
+def delete_profile_cache(conn, profile_name: str) -> None:
+    """Purge all cached resources associated with a profile name to prevent database orphans."""
+    with conn.cursor() as cur:
+        tables = [
+            "instance_cache",
+            "s3_bucket_cache",
+            "lambda_cache",
+            "iam_user_cache",
+            "iam_role_cache",
+            "iam_group_cache",
+            "ses_account_stats_cache",
+            "ses_sending_quota_cache",
+            "ses_identity_cache",
+            "route53_zone_cache",
+            "route53_record_cache"
+        ]
+        for table in tables:
+            cur.execute(f"DELETE FROM {table} WHERE profile_name = %s", (profile_name,))
+
+
 @app.get("/api/profiles", response_model=list[ProfileResponse])
 def list_profiles():
     with get_connection() as conn:
@@ -484,11 +504,20 @@ def patch_profile(profile_id: int, payload: ProfileUpdate):
     try:
         with get_connection() as conn:
             with conn.cursor() as cur:
+                old_name = None
+                if "name" in updates:
+                    cur.execute("SELECT name FROM profiles WHERE id = %s", (profile_id,))
+                    p_row = cur.fetchone()
+                    if p_row:
+                        old_name = p_row["name"]
+
                 cur.execute(
                     f"UPDATE profiles SET {set_clause} WHERE id = %s RETURNING id, name, regions, color, env_tag, account_id, last_tested_at, last_test_ok",
                     values,
                 )
                 row = cur.fetchone()
+                if row and old_name and row["name"] != old_name:
+                    delete_profile_cache(conn, old_name)
             conn.commit()
         if not row:
             raise HTTPException(status_code=404, detail="Profile not found")
@@ -501,12 +530,17 @@ def patch_profile(profile_id: int, payload: ProfileUpdate):
 def delete_profile(profile_id: int):
     with get_connection() as conn:
         with conn.cursor() as cur:
+            cur.execute("SELECT name FROM profiles WHERE id = %s", (profile_id,))
+            row = cur.fetchone()
+            if not row:
+                raise HTTPException(status_code=404, detail="Profile not found")
+            profile_name = row["name"]
+
             cur.execute("DELETE FROM profiles WHERE id = %s RETURNING id", (profile_id,))
             deleted = cur.fetchone()
+            if deleted:
+                delete_profile_cache(conn, profile_name)
         conn.commit()
-
-    if not deleted:
-        raise HTTPException(status_code=404, detail="Profile not found")
 
 
 class ProfileSummary(BaseModel):

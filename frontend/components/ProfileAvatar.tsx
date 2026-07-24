@@ -79,19 +79,18 @@ export default function ProfileBadgeFull({
   color: string;
   envTag?: EnvTag;
 }) {
-  const [r, g, b] = hexToRgb(color);
   return (
     <span
-      className="inline-flex items-center gap-1.5 rounded-full pl-1 pr-2.5 py-0.5 border whitespace-nowrap"
+      className="inline-flex items-center gap-2 rounded-full pl-1 pr-2.5 py-0.5 border whitespace-nowrap"
       style={{
-        backgroundColor: `rgba(${r},${g},${b},0.10)`,
-        borderColor: `rgba(${r},${g},${b},0.30)`,
+        backgroundColor: "var(--bg-subtle)",
+        borderColor: "var(--border)",
       }}
     >
       <ProfileAvatar name={profile} color={color} size="sm" />
       <span
-        className="text-xs font-semibold"
-        style={{ color }}
+        className="text-xs font-medium"
+        style={{ color: "var(--text-primary)" }}
       >
         {profile}
       </span>

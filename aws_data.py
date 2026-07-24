@@ -452,22 +452,9 @@ def get_ses_identities(profile: dict) -> list[dict]:
                     "delivery_topic_arn":      notif.get("DeliveryTopic") or None,
                     "forwarding_enabled":      notif.get("ForwardingEnabled", True),
                 })
-        except Exception as e:
-            rows.append({
-                "identity":                f"Error ({region}): {str(e)}",
-                "identity_type":           "EmailAddress",
-                "profile_name":            profile["name"],
-                "profile_color":           profile["color"],
-                "profile_env":             profile.get("env_tag", "other"),
-                "region":                  region,
-                "verification_status":     "Failed",
-                "dkim_enabled":            False,
-                "dkim_verification_status": "NotStarted",
-                "bounce_topic_arn":        None,
-                "complaint_topic_arn":     None,
-                "delivery_topic_arn":      None,
-                "forwarding_enabled":      False,
-            })
+        except Exception:
+            # SES may not be available or enabled in this region — skip silently
+            pass
 
     return rows
 

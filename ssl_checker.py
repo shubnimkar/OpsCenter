@@ -43,7 +43,7 @@ def fetch_ssl_info(domain: str, port: int = 443, timeout: int = 10) -> dict:
         issuer, valid_from, expiry_date, days_remaining, status, error (None if ok)
     """
     try:
-        domain, port = validate_tls_target(domain, port)
+        domain, port, resolved_ip = validate_tls_target(domain, port)
     except ValueError as exc:
         return {
             "issuer": "",
@@ -62,7 +62,7 @@ def fetch_ssl_info(domain: str, port: int = 443, timeout: int = 10) -> dict:
     ctx.verify_mode = ssl.CERT_NONE
 
     try:
-        with socket.create_connection((domain, port), timeout=timeout) as sock:
+        with socket.create_connection((resolved_ip, port), timeout=timeout) as sock:
             with ctx.wrap_socket(sock, server_hostname=domain) as ssock:
                 der_bytes = ssock.getpeercert(binary_form=True)
     except (socket.gaierror, socket.timeout, ConnectionRefusedError, OSError) as exc:

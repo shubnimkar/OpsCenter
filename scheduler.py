@@ -17,6 +17,7 @@ import logging
 import os
 import threading
 from datetime import datetime, timezone
+from contextlib import contextmanager
 
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.jobstores.sqlalchemy import SQLAlchemyJobStore
@@ -43,6 +44,23 @@ IAM_JOB_ID = "iam_poll"
 SES_JOB_ID = "ses_poll"
 ROUTE53_JOB_ID = "route53_poll"
 SSL_JOB_ID = "ssl_poll"
+
+_running_polls = set()
+_running_polls_lock = threading.Lock()
+
+@contextmanager
+def running_poll_lock(poll_name: str):
+    """Context manager to ensure only one instance of a specific poll type runs concurrently."""
+    with _running_polls_lock:
+        if poll_name in _running_polls:
+            logger.info("Poll '%s' is already in progress — skipping duplicate run", poll_name)
+            raise RuntimeError(f"Poll {poll_name} already in progress")
+        _running_polls.add(poll_name)
+    try:
+        yield
+    finally:
+        with _running_polls_lock:
+            _running_polls.discard(poll_name)
 
 # ── Shared helpers ────────────────────────────────────────────────────────────
 
@@ -183,56 +201,70 @@ def poll_ec2() -> None:
     Fetch EC2 instance data for every profile and refresh the cache.
     Called by APScheduler on every interval tick and by the manual trigger endpoint.
     """
-    logger.info("EC2 poll started")
-    profiles = []
-
     try:
-        with get_connection() as conn:
-            with conn.cursor() as cur:
-                cur.execute(
-                    "SELECT name, access_key, secret_key, regions, region, color, env_tag FROM profiles ORDER BY name"
+        with running_poll_lock("ec2"):
+            logger.info("EC2 poll started")
+            profiles = []
+
+            try:
+                with get_connection() as conn:
+                    with conn.cursor() as cur:
+                        cur.execute(
+                            "SELECT name, access_key, secret_key, regions, region, color, env_tag FROM profiles ORDER BY name"
+                        )
+                        profiles = cur.fetchall()
+            except Exception as exc:
+                logger.error("Failed to load profiles from DB: %s", exc)
+                return
+
+            if not profiles:
+                logger.info("No profiles configured — nothing to poll")
+                _write_meta_success()
+                return
+
+            all_rows: list[dict] = []
+            profile_errors: list[str] = []
+            successful_profiles: list[str] = []
+
+            for profile in profiles:
+                try:
+                    rows = _fetch_instances_for_profile(profile)
+                    all_rows.extend(rows)
+                    successful_profiles.append(profile["name"])
+                    logger.debug("Profile %s → %d instance(s)", profile["name"], len(rows))
+                except (ClientError, NoCredentialsError) as exc:
+                    msg = str(exc)
+                    logger.warning("AWS error for profile %s: %s", profile["name"], msg)
+                    profile_errors.append(f"{profile['name']}: {msg}")
+                except Exception as exc:
+                    msg = str(exc)
+                    logger.warning("Unexpected error for profile %s: %s", profile["name"], msg)
+                    profile_errors.append(f"{profile['name']}: {msg}")
+
+            try:
+                with get_connection() as conn:
+                    _upsert_instances(conn, all_rows)
+                    with conn.cursor() as cur:
+                        for profile_name in successful_profiles:
+                            cur.execute(
+                                "DELETE FROM instance_cache WHERE profile_name = %s AND cached_at < NOW()",
+                                (profile_name,)
+                            )
+                    status = "ok" if not profile_errors else "partial"
+                    error_text = "\n".join(profile_errors) if profile_errors else None
+                    _set_meta(conn, status=status, error=error_text)
+                    conn.commit()
+                logger.info(
+                    "EC2 poll complete: %d instance(s) cached, %d profile error(s)",
+                    len(all_rows),
+                    len(profile_errors),
                 )
-                profiles = cur.fetchall()
-    except Exception as exc:
-        logger.error("Failed to load profiles from DB: %s", exc)
-        return
-
-    if not profiles:
-        logger.info("No profiles configured — nothing to poll")
-        _write_meta_success()
-        return
-
-    all_rows: list[dict] = []
-    profile_errors: list[str] = []
-
-    for profile in profiles:
-        try:
-            rows = _fetch_instances_for_profile(profile)
-            all_rows.extend(rows)
-            logger.debug("Profile %s → %d instance(s)", profile["name"], len(rows))
-        except (ClientError, NoCredentialsError) as exc:
-            msg = str(exc)
-            logger.warning("AWS error for profile %s: %s", profile["name"], msg)
-            profile_errors.append(f"{profile['name']}: {msg}")
-        except Exception as exc:
-            msg = str(exc)
-            logger.warning("Unexpected error for profile %s: %s", profile["name"], msg)
-            profile_errors.append(f"{profile['name']}: {msg}")
-
-    try:
-        with get_connection() as conn:
-            _upsert_instances(conn, all_rows)
-            status = "ok" if not profile_errors else "partial"
-            error_text = "\n".join(profile_errors) if profile_errors else None
-            _set_meta(conn, status=status, error=error_text)
-            conn.commit()
-        logger.info(
-            "EC2 poll complete: %d instance(s) cached, %d profile error(s)",
-            len(all_rows),
-            len(profile_errors),
-        )
-    except Exception as exc:
-        logger.error("Failed to write EC2 cache to DB: %s", exc)
+            except Exception as exc:
+                logger.error("Failed to write EC2 cache to DB: %s", exc)
+    except RuntimeError as exc:
+        if "already in progress" in str(exc):
+            return
+        raise
 
 
 # ── S3 poll ───────────────────────────────────────────────────────────────────
@@ -301,52 +333,66 @@ def poll_s3() -> None:
     Fetch S3 bucket data for every profile and refresh the cache.
     Called by APScheduler on every interval tick and by the manual trigger endpoint.
     """
-    logger.info("S3 poll started")
-    profiles = []
-
     try:
-        with get_connection() as conn:
-            with conn.cursor() as cur:
-                cur.execute(
-                    "SELECT name, access_key, secret_key, regions, region, color, env_tag FROM profiles ORDER BY name"
+        with running_poll_lock("s3"):
+            logger.info("S3 poll started")
+            profiles = []
+
+            try:
+                with get_connection() as conn:
+                    with conn.cursor() as cur:
+                        cur.execute(
+                            "SELECT name, access_key, secret_key, regions, region, color, env_tag FROM profiles ORDER BY name"
+                        )
+                        profiles = cur.fetchall()
+            except Exception as exc:
+                logger.error("Failed to load profiles from DB for S3 poll: %s", exc)
+                return
+
+            if not profiles:
+                logger.info("No profiles configured — nothing to poll for S3")
+                return
+
+            all_rows: list[dict] = []
+            profile_errors: list[str] = []
+            successful_profiles: list[str] = []
+
+            for profile in profiles:
+                try:
+                    rows = _fetch_buckets_for_profile(profile)
+                    all_rows.extend(rows)
+                    successful_profiles.append(profile["name"])
+                    logger.debug("S3 profile %s → %d bucket(s)", profile["name"], len(rows))
+                except (ClientError, NoCredentialsError) as exc:
+                    msg = str(exc)
+                    logger.warning("AWS S3 error for profile %s: %s", profile["name"], msg)
+                    profile_errors.append(f"{profile['name']}: {msg}")
+                except Exception as exc:
+                    msg = str(exc)
+                    logger.warning("Unexpected S3 error for profile %s: %s", profile["name"], msg)
+                    profile_errors.append(f"{profile['name']}: {msg}")
+
+            try:
+                with get_connection() as conn:
+                    _upsert_s3_buckets(conn, all_rows)
+                    with conn.cursor() as cur:
+                        for profile_name in successful_profiles:
+                            cur.execute(
+                                "DELETE FROM s3_bucket_cache WHERE profile_name = %s AND cached_at < NOW()",
+                                (profile_name,)
+                            )
+                    conn.commit()
+                logger.info(
+                    "S3 poll complete: %d bucket(s) cached, %d profile error(s)",
+                    len(all_rows),
+                    len(profile_errors),
                 )
-                profiles = cur.fetchall()
-    except Exception as exc:
-        logger.error("Failed to load profiles from DB for S3 poll: %s", exc)
-        return
-
-    if not profiles:
-        logger.info("No profiles configured — nothing to poll for S3")
-        return
-
-    all_rows: list[dict] = []
-    profile_errors: list[str] = []
-
-    for profile in profiles:
-        try:
-            rows = _fetch_buckets_for_profile(profile)
-            all_rows.extend(rows)
-            logger.debug("S3 profile %s → %d bucket(s)", profile["name"], len(rows))
-        except (ClientError, NoCredentialsError) as exc:
-            msg = str(exc)
-            logger.warning("AWS S3 error for profile %s: %s", profile["name"], msg)
-            profile_errors.append(f"{profile['name']}: {msg}")
-        except Exception as exc:
-            msg = str(exc)
-            logger.warning("Unexpected S3 error for profile %s: %s", profile["name"], msg)
-            profile_errors.append(f"{profile['name']}: {msg}")
-
-    try:
-        with get_connection() as conn:
-            _upsert_s3_buckets(conn, all_rows)
-            conn.commit()
-        logger.info(
-            "S3 poll complete: %d bucket(s) cached, %d profile error(s)",
-            len(all_rows),
-            len(profile_errors),
-        )
-    except Exception as exc:
-        logger.error("Failed to write S3 cache to DB: %s", exc)
+            except Exception as exc:
+                logger.error("Failed to write S3 cache to DB: %s", exc)
+    except RuntimeError as exc:
+        if "already in progress" in str(exc):
+            return
+        raise
 
 
 # ── Lambda poll ───────────────────────────────────────────────────────────────
@@ -376,11 +422,12 @@ def _get_lambda_last_invocation(logs_client, function_name: str) -> "datetime | 
     return None
 
 
-def _fetch_lambdas_for_profile(profile: dict) -> list[dict]:
+def _fetch_lambdas_for_profile(profile: dict) -> tuple[list[dict], list[tuple[str, str]]]:
     """Call AWS Lambda list_functions for one profile across all its regions."""
     regions = profile.get("regions") or [profile.get("region", "us-east-1")]
 
     rows = []
+    successful_regions = []
     for region in regions:
         try:
             session = boto3.Session(
@@ -423,6 +470,7 @@ def _fetch_lambdas_for_profile(profile: dict) -> list[dict]:
                         "description":          fn.get("Description", ""),
                         "last_invocation_time": last_invocation_time,
                     })
+            successful_regions.append((profile["name"], region))
         except (ClientError, NoCredentialsError) as exc:
             logger.warning(
                 "AWS Lambda error for profile %s region %s: %s",
@@ -433,7 +481,7 @@ def _fetch_lambdas_for_profile(profile: dict) -> list[dict]:
                 "Unexpected Lambda error for profile %s region %s: %s",
                 profile["name"], region, exc,
             )
-    return rows
+    return rows, successful_regions
 
 
 def _upsert_lambdas(conn, rows: list[dict]) -> None:
@@ -477,48 +525,62 @@ def poll_lambda() -> None:
     Fetch Lambda function data for every profile and refresh the cache.
     Called by APScheduler on every interval tick and by the manual trigger endpoint.
     """
-    logger.info("Lambda poll started")
-    profiles = []
-
     try:
-        with get_connection() as conn:
-            with conn.cursor() as cur:
-                cur.execute(
-                    "SELECT name, access_key, secret_key, regions, region, color, env_tag FROM profiles ORDER BY name"
+        with running_poll_lock("lambda"):
+            logger.info("Lambda poll started")
+            profiles = []
+
+            try:
+                with get_connection() as conn:
+                    with conn.cursor() as cur:
+                        cur.execute(
+                            "SELECT name, access_key, secret_key, regions, region, color, env_tag FROM profiles ORDER BY name"
+                        )
+                        profiles = cur.fetchall()
+            except Exception as exc:
+                logger.error("Failed to load profiles from DB for Lambda poll: %s", exc)
+                return
+
+            if not profiles:
+                logger.info("No profiles configured — nothing to poll for Lambda")
+                return
+
+            all_rows: list[dict] = []
+            profile_errors: list[str] = []
+            successful_regions: list[tuple[str, str]] = []
+
+            for profile in profiles:
+                try:
+                    rows, regions = _fetch_lambdas_for_profile(profile)
+                    all_rows.extend(rows)
+                    successful_regions.extend(regions)
+                    logger.debug("Lambda profile %s → %d function(s)", profile["name"], len(rows))
+                except Exception as exc:
+                    msg = str(exc)
+                    logger.warning("Unexpected Lambda error for profile %s: %s", profile["name"], msg)
+                    profile_errors.append(f"{profile['name']}: {msg}")
+
+            try:
+                with get_connection() as conn:
+                    _upsert_lambdas(conn, all_rows)
+                    with conn.cursor() as cur:
+                        for profile_name, region in successful_regions:
+                            cur.execute(
+                                "DELETE FROM lambda_cache WHERE profile_name = %s AND region = %s AND cached_at < NOW()",
+                                (profile_name, region)
+                            )
+                    conn.commit()
+                logger.info(
+                    "Lambda poll complete: %d function(s) cached, %d profile error(s)",
+                    len(all_rows),
+                    len(profile_errors),
                 )
-                profiles = cur.fetchall()
-    except Exception as exc:
-        logger.error("Failed to load profiles from DB for Lambda poll: %s", exc)
-        return
-
-    if not profiles:
-        logger.info("No profiles configured — nothing to poll for Lambda")
-        return
-
-    all_rows: list[dict] = []
-    profile_errors: list[str] = []
-
-    for profile in profiles:
-        try:
-            rows = _fetch_lambdas_for_profile(profile)
-            all_rows.extend(rows)
-            logger.debug("Lambda profile %s → %d function(s)", profile["name"], len(rows))
-        except Exception as exc:
-            msg = str(exc)
-            logger.warning("Unexpected Lambda error for profile %s: %s", profile["name"], msg)
-            profile_errors.append(f"{profile['name']}: {msg}")
-
-    try:
-        with get_connection() as conn:
-            _upsert_lambdas(conn, all_rows)
-            conn.commit()
-        logger.info(
-            "Lambda poll complete: %d function(s) cached, %d profile error(s)",
-            len(all_rows),
-            len(profile_errors),
-        )
-    except Exception as exc:
-        logger.error("Failed to write Lambda cache to DB: %s", exc)
+            except Exception as exc:
+                logger.error("Failed to write Lambda cache to DB: %s", exc)
+    except RuntimeError as exc:
+        if "already in progress" in str(exc):
+            return
+        raise
 
 
 # ── IAM poll ─────────────────────────────────────────────────────────────────
@@ -653,84 +715,112 @@ def poll_iam() -> None:
     IAM is a global service — one request per profile (no region loop).
     Called by APScheduler and by the manual trigger endpoint.
     """
-    from aws_data import get_iam_users, get_iam_roles, get_iam_groups
-    from botocore.exceptions import ClientError, NoCredentialsError
-
-    logger.info("IAM poll started")
-    profiles = []
-
     try:
-        with get_connection() as conn:
-            with conn.cursor() as cur:
-                cur.execute(
-                    "SELECT name, access_key, secret_key, regions, region, color, env_tag FROM profiles ORDER BY name"
+        with running_poll_lock("iam"):
+            from aws_data import get_iam_users, get_iam_roles, get_iam_groups
+            from botocore.exceptions import ClientError, NoCredentialsError
+
+            logger.info("IAM poll started")
+            profiles = []
+
+            try:
+                with get_connection() as conn:
+                    with conn.cursor() as cur:
+                        cur.execute(
+                            "SELECT name, access_key, secret_key, regions, region, color, env_tag FROM profiles ORDER BY name"
+                        )
+                        profiles = cur.fetchall()
+            except Exception as exc:
+                logger.error("Failed to load profiles from DB for IAM poll: %s", exc)
+                return
+
+            if not profiles:
+                logger.info("No profiles configured — nothing to poll for IAM")
+                return
+
+            all_users: list[dict] = []
+            all_roles: list[dict] = []
+            all_groups: list[dict] = []
+            profile_errors: list[str] = []
+            successful_users: list[str] = []
+            successful_roles: list[str] = []
+            successful_groups: list[str] = []
+
+            for profile in profiles:
+                try:
+                    users = get_iam_users(profile)
+                    all_users.extend(users)
+                    successful_users.append(profile["name"])
+                    logger.debug("IAM profile %s → %d user(s)", profile["name"], len(users))
+                except (ClientError, NoCredentialsError) as exc:
+                    msg = str(exc)
+                    logger.warning("AWS IAM users error for profile %s: %s", profile["name"], msg)
+                    profile_errors.append(f"{profile['name']} (users): {msg}")
+                except Exception as exc:
+                    msg = str(exc)
+                    logger.warning("Unexpected IAM users error for profile %s: %s", profile["name"], msg)
+                    profile_errors.append(f"{profile['name']} (users): {msg}")
+
+                try:
+                    roles = get_iam_roles(profile)
+                    all_roles.extend(roles)
+                    successful_roles.append(profile["name"])
+                    logger.debug("IAM profile %s → %d role(s)", profile["name"], len(roles))
+                except (ClientError, NoCredentialsError) as exc:
+                    msg = str(exc)
+                    logger.warning("AWS IAM roles error for profile %s: %s", profile["name"], msg)
+                    profile_errors.append(f"{profile['name']} (roles): {msg}")
+                except Exception as exc:
+                    msg = str(exc)
+                    logger.warning("Unexpected IAM roles error for profile %s: %s", profile["name"], msg)
+                    profile_errors.append(f"{profile['name']} (roles): {msg}")
+
+                try:
+                    groups = get_iam_groups(profile)
+                    all_groups.extend(groups)
+                    successful_groups.append(profile["name"])
+                    logger.debug("IAM profile %s → %d group(s)", profile["name"], len(groups))
+                except (ClientError, NoCredentialsError) as exc:
+                    msg = str(exc)
+                    logger.warning("AWS IAM groups error for profile %s: %s", profile["name"], msg)
+                    profile_errors.append(f"{profile['name']} (groups): {msg}")
+                except Exception as exc:
+                    msg = str(exc)
+                    logger.warning("Unexpected IAM groups error for profile %s: %s", profile["name"], msg)
+                    profile_errors.append(f"{profile['name']} (groups): {msg}")
+
+            try:
+                with get_connection() as conn:
+                    _upsert_iam_users(conn, all_users)
+                    _upsert_iam_roles(conn, all_roles)
+                    _upsert_iam_groups(conn, all_groups)
+                    with conn.cursor() as cur:
+                        for profile_name in successful_users:
+                            cur.execute(
+                                "DELETE FROM iam_user_cache WHERE profile_name = %s AND cached_at < NOW()",
+                                (profile_name,)
+                            )
+                        for profile_name in successful_roles:
+                            cur.execute(
+                                "DELETE FROM iam_role_cache WHERE profile_name = %s AND cached_at < NOW()",
+                                (profile_name,)
+                            )
+                        for profile_name in successful_groups:
+                            cur.execute(
+                                "DELETE FROM iam_group_cache WHERE profile_name = %s AND cached_at < NOW()",
+                                (profile_name,)
+                            )
+                    conn.commit()
+                logger.info(
+                    "IAM poll complete: %d user(s), %d role(s), %d group(s) cached, %d error(s)",
+                    len(all_users), len(all_roles), len(all_groups), len(profile_errors),
                 )
-                profiles = cur.fetchall()
-    except Exception as exc:
-        logger.error("Failed to load profiles from DB for IAM poll: %s", exc)
-        return
-
-    if not profiles:
-        logger.info("No profiles configured — nothing to poll for IAM")
-        return
-
-    all_users: list[dict] = []
-    all_roles: list[dict] = []
-    all_groups: list[dict] = []
-    profile_errors: list[str] = []
-
-    for profile in profiles:
-        try:
-            users = get_iam_users(profile)
-            all_users.extend(users)
-            logger.debug("IAM profile %s → %d user(s)", profile["name"], len(users))
-        except (ClientError, NoCredentialsError) as exc:
-            msg = str(exc)
-            logger.warning("AWS IAM users error for profile %s: %s", profile["name"], msg)
-            profile_errors.append(f"{profile['name']} (users): {msg}")
-        except Exception as exc:
-            msg = str(exc)
-            logger.warning("Unexpected IAM users error for profile %s: %s", profile["name"], msg)
-            profile_errors.append(f"{profile['name']} (users): {msg}")
-
-        try:
-            roles = get_iam_roles(profile)
-            all_roles.extend(roles)
-            logger.debug("IAM profile %s → %d role(s)", profile["name"], len(roles))
-        except (ClientError, NoCredentialsError) as exc:
-            msg = str(exc)
-            logger.warning("AWS IAM roles error for profile %s: %s", profile["name"], msg)
-            profile_errors.append(f"{profile['name']} (roles): {msg}")
-        except Exception as exc:
-            msg = str(exc)
-            logger.warning("Unexpected IAM roles error for profile %s: %s", profile["name"], msg)
-            profile_errors.append(f"{profile['name']} (roles): {msg}")
-
-        try:
-            groups = get_iam_groups(profile)
-            all_groups.extend(groups)
-            logger.debug("IAM profile %s → %d group(s)", profile["name"], len(groups))
-        except (ClientError, NoCredentialsError) as exc:
-            msg = str(exc)
-            logger.warning("AWS IAM groups error for profile %s: %s", profile["name"], msg)
-            profile_errors.append(f"{profile['name']} (groups): {msg}")
-        except Exception as exc:
-            msg = str(exc)
-            logger.warning("Unexpected IAM groups error for profile %s: %s", profile["name"], msg)
-            profile_errors.append(f"{profile['name']} (groups): {msg}")
-
-    try:
-        with get_connection() as conn:
-            _upsert_iam_users(conn, all_users)
-            _upsert_iam_roles(conn, all_roles)
-            _upsert_iam_groups(conn, all_groups)
-            conn.commit()
-        logger.info(
-            "IAM poll complete: %d user(s), %d role(s), %d group(s) cached, %d error(s)",
-            len(all_users), len(all_roles), len(all_groups), len(profile_errors),
-        )
-    except Exception as exc:
-        logger.error("Failed to write IAM cache to DB: %s", exc)
+            except Exception as exc:
+                logger.error("Failed to write IAM cache to DB: %s", exc)
+    except RuntimeError as exc:
+        if "already in progress" in str(exc):
+            return
+        raise
 
 
 # ── SES poll ─────────────────────────────────────────────────────────────────
@@ -839,75 +929,103 @@ def poll_ses() -> None:
     bounce/complaint/reject counts) for every profile and refresh the cache.
     Called by APScheduler on every interval tick and by the manual trigger endpoint.
     """
-    from aws_data import get_ses_identities, get_ses_sending_quota, get_ses_account_stats
-    from botocore.exceptions import ClientError, NoCredentialsError
-
-    logger.info("SES poll started")
-    profiles = []
-
     try:
-        with get_connection() as conn:
-            with conn.cursor() as cur:
-                cur.execute(
-                    "SELECT name, access_key, secret_key, regions, region, color, env_tag FROM profiles ORDER BY name"
+        with running_poll_lock("ses"):
+            from aws_data import get_ses_identities, get_ses_sending_quota, get_ses_account_stats
+            from botocore.exceptions import ClientError, NoCredentialsError
+
+            logger.info("SES poll started")
+            profiles = []
+
+            try:
+                with get_connection() as conn:
+                    with conn.cursor() as cur:
+                        cur.execute(
+                            "SELECT name, access_key, secret_key, regions, region, color, env_tag FROM profiles ORDER BY name"
+                        )
+                        profiles = cur.fetchall()
+            except Exception as exc:
+                logger.error("Failed to load profiles from DB for SES poll: %s", exc)
+                return
+
+            if not profiles:
+                logger.info("No profiles configured — nothing to poll for SES")
+                return
+
+            all_rows: list[dict] = []
+            all_quota_rows: list[dict] = []
+            all_account_stats: list[dict] = []
+            profile_errors: list[str] = []
+            successful_identities_profiles: list[str] = []
+            successful_quotas_profiles: list[str] = []
+            successful_stats_profiles: list[str] = []
+
+            for profile in profiles:
+                try:
+                    rows = get_ses_identities(profile)
+                    all_rows.extend(rows)
+                    successful_identities_profiles.append(profile["name"])
+                    logger.debug("SES profile %s → %d identity(ies)", profile["name"], len(rows))
+                except (ClientError, NoCredentialsError) as exc:
+                    msg = str(exc)
+                    logger.warning("AWS SES error for profile %s: %s", profile["name"], msg)
+                    profile_errors.append(f"{profile['name']}: {msg}")
+                except Exception as exc:
+                    msg = str(exc)
+                    logger.warning("Unexpected SES error for profile %s: %s", profile["name"], msg)
+                    profile_errors.append(f"{profile['name']}: {msg}")
+
+                try:
+                    quota_rows = get_ses_sending_quota(profile)
+                    all_quota_rows.extend(quota_rows)
+                    successful_quotas_profiles.append(profile["name"])
+                    logger.debug("SES quota profile %s → %d region(s)", profile["name"], len(quota_rows))
+                except Exception as exc:
+                    logger.warning("SES quota error for profile %s: %s", profile["name"], exc)
+
+                try:
+                    account_stats = get_ses_account_stats(profile)
+                    all_account_stats.extend(account_stats)
+                    successful_stats_profiles.append(profile["name"])
+                    logger.debug("SES account stats profile %s → %d region(s)", profile["name"], len(account_stats))
+                except Exception as exc:
+                    logger.warning("SES account stats error for profile %s: %s", profile["name"], exc)
+
+            try:
+                with get_connection() as conn:
+                    _upsert_ses_identities(conn, all_rows)
+                    _upsert_ses_sending_quotas(conn, all_quota_rows)
+                    _upsert_ses_account_stats(conn, all_account_stats)
+                    with conn.cursor() as cur:
+                        for profile_name in successful_identities_profiles:
+                            cur.execute(
+                                "DELETE FROM ses_identity_cache WHERE profile_name = %s AND cached_at < NOW()",
+                                (profile_name,)
+                            )
+                        for profile_name in successful_quotas_profiles:
+                            cur.execute(
+                                "DELETE FROM ses_sending_quota_cache WHERE profile_name = %s AND cached_at < NOW()",
+                                (profile_name,)
+                            )
+                        for profile_name in successful_stats_profiles:
+                            cur.execute(
+                                "DELETE FROM ses_account_stats_cache WHERE profile_name = %s AND cached_at < NOW()",
+                                (profile_name,)
+                            )
+                    conn.commit()
+                logger.info(
+                    "SES poll complete: %d identity(ies), %d quota row(s), %d account stat row(s) cached, %d profile error(s)",
+                    len(all_rows),
+                    len(all_quota_rows),
+                    len(all_account_stats),
+                    len(profile_errors),
                 )
-                profiles = cur.fetchall()
-    except Exception as exc:
-        logger.error("Failed to load profiles from DB for SES poll: %s", exc)
-        return
-
-    if not profiles:
-        logger.info("No profiles configured — nothing to poll for SES")
-        return
-
-    all_rows: list[dict] = []
-    all_quota_rows: list[dict] = []
-    all_account_stats: list[dict] = []
-    profile_errors: list[str] = []
-
-    for profile in profiles:
-        try:
-            rows = get_ses_identities(profile)
-            all_rows.extend(rows)
-            logger.debug("SES profile %s → %d identity(ies)", profile["name"], len(rows))
-        except (ClientError, NoCredentialsError) as exc:
-            msg = str(exc)
-            logger.warning("AWS SES error for profile %s: %s", profile["name"], msg)
-            profile_errors.append(f"{profile['name']}: {msg}")
-        except Exception as exc:
-            msg = str(exc)
-            logger.warning("Unexpected SES error for profile %s: %s", profile["name"], msg)
-            profile_errors.append(f"{profile['name']}: {msg}")
-
-        try:
-            quota_rows = get_ses_sending_quota(profile)
-            all_quota_rows.extend(quota_rows)
-            logger.debug("SES quota profile %s → %d region(s)", profile["name"], len(quota_rows))
-        except Exception as exc:
-            logger.warning("SES quota error for profile %s: %s", profile["name"], exc)
-
-        try:
-            account_stats = get_ses_account_stats(profile)
-            all_account_stats.extend(account_stats)
-            logger.debug("SES account stats profile %s → %d region(s)", profile["name"], len(account_stats))
-        except Exception as exc:
-            logger.warning("SES account stats error for profile %s: %s", profile["name"], exc)
-
-    try:
-        with get_connection() as conn:
-            _upsert_ses_identities(conn, all_rows)
-            _upsert_ses_sending_quotas(conn, all_quota_rows)
-            _upsert_ses_account_stats(conn, all_account_stats)
-            conn.commit()
-        logger.info(
-            "SES poll complete: %d identity(ies), %d quota row(s), %d account stat row(s) cached, %d profile error(s)",
-            len(all_rows),
-            len(all_quota_rows),
-            len(all_account_stats),
-            len(profile_errors),
-        )
-    except Exception as exc:
-        logger.error("Failed to write SES cache to DB: %s", exc)
+            except Exception as exc:
+                logger.error("Failed to write SES cache to DB: %s", exc)
+    except RuntimeError as exc:
+        if "already in progress" in str(exc):
+            return
+        raise
 
 
 # ── Route 53 poll ─────────────────────────────────────────────────────────────
@@ -983,70 +1101,96 @@ def poll_route53() -> None:
     Route 53 is a global service — one request per profile (no region loop).
     Called by APScheduler on every interval tick and by the manual trigger endpoint.
     """
-    from aws_data import get_route53_hosted_zones, get_route53_records
-    from botocore.exceptions import ClientError, NoCredentialsError
-
-    logger.info("Route 53 poll started")
-    profiles = []
-
     try:
-        with get_connection() as conn:
-            with conn.cursor() as cur:
-                cur.execute(
-                    "SELECT name, access_key, secret_key, regions, region, color, env_tag FROM profiles ORDER BY name"
-                )
-                profiles = cur.fetchall()
-    except Exception as exc:
-        logger.error("Failed to load profiles from DB for Route 53 poll: %s", exc)
-        return
+        with running_poll_lock("route53"):
+            from aws_data import get_route53_hosted_zones, get_route53_records
+            from botocore.exceptions import ClientError, NoCredentialsError
 
-    if not profiles:
-        logger.info("No profiles configured — nothing to poll for Route 53")
-        return
+            logger.info("Route 53 poll started")
+            profiles = []
 
-    all_zones: list[dict] = []
-    all_records: list[dict] = []
-    profile_errors: list[str] = []
+            try:
+                with get_connection() as conn:
+                    with conn.cursor() as cur:
+                        cur.execute(
+                            "SELECT name, access_key, secret_key, regions, region, color, env_tag FROM profiles ORDER BY name"
+                        )
+                        profiles = cur.fetchall()
+            except Exception as exc:
+                logger.error("Failed to load profiles from DB for Route 53 poll: %s", exc)
+                return
 
-    for profile in profiles:
-        try:
-            zones = get_route53_hosted_zones(profile)
-            all_zones.extend(zones)
-            logger.debug("Route 53 profile %s → %d zone(s)", profile["name"], len(zones))
+            if not profiles:
+                logger.info("No profiles configured — nothing to poll for Route 53")
+                return
 
-            for zone in zones:
+            all_zones: list[dict] = []
+            all_records: list[dict] = []
+            profile_errors: list[str] = []
+            successful_zones_profiles: list[str] = []
+            successful_records_zones: list[tuple[str, str]] = []
+
+            for profile in profiles:
                 try:
-                    records = get_route53_records(profile, zone["zone_id"])
-                    all_records.extend(records)
-                    logger.debug(
-                        "Route 53 zone %s → %d record(s)", zone["zone_id"], len(records)
-                    )
-                except Exception as exc:
-                    logger.warning(
-                        "Route 53 records error for zone %s: %s", zone["zone_id"], exc
-                    )
-        except (ClientError, NoCredentialsError) as exc:
-            msg = str(exc)
-            logger.warning("AWS Route 53 error for profile %s: %s", profile["name"], msg)
-            profile_errors.append(f"{profile['name']}: {msg}")
-        except Exception as exc:
-            msg = str(exc)
-            logger.warning("Unexpected Route 53 error for profile %s: %s", profile["name"], msg)
-            profile_errors.append(f"{profile['name']}: {msg}")
+                    zones = get_route53_hosted_zones(profile)
+                    all_zones.extend(zones)
+                    successful_zones_profiles.append(profile["name"])
+                    logger.debug("Route 53 profile %s → %d zone(s)", profile["name"], len(zones))
 
-    try:
-        with get_connection() as conn:
-            _upsert_route53_zones(conn, all_zones)
-            _upsert_route53_records(conn, all_records)
-            conn.commit()
-        logger.info(
-            "Route 53 poll complete: %d zone(s), %d record(s) cached, %d profile error(s)",
-            len(all_zones),
-            len(all_records),
-            len(profile_errors),
-        )
-    except Exception as exc:
-        logger.error("Failed to write Route 53 cache to DB: %s", exc)
+                    for zone in zones:
+                        try:
+                            records = get_route53_records(profile, zone["zone_id"])
+                            all_records.extend(records)
+                            successful_records_zones.append((profile["name"], zone["zone_id"]))
+                            logger.debug(
+                                "Route 53 zone %s → %d record(s)", zone["zone_id"], len(records)
+                            )
+                        except Exception as exc:
+                            logger.warning(
+                                "Route 53 records error for zone %s: %s", zone["zone_id"], exc
+                            )
+                except (ClientError, NoCredentialsError) as exc:
+                    msg = str(exc)
+                    logger.warning("AWS Route 53 error for profile %s: %s", profile["name"], msg)
+                    profile_errors.append(f"{profile['name']}: {msg}")
+                except Exception as exc:
+                    msg = str(exc)
+                    logger.warning("Unexpected Route 53 error for profile %s: %s", profile["name"], msg)
+                    profile_errors.append(f"{profile['name']}: {msg}")
+
+            try:
+                with get_connection() as conn:
+                    _upsert_route53_zones(conn, all_zones)
+                    _upsert_route53_records(conn, all_records)
+                    with conn.cursor() as cur:
+                        for profile_name in successful_zones_profiles:
+                            cur.execute(
+                                "DELETE FROM route53_zone_cache WHERE profile_name = %s AND cached_at < NOW()",
+                                (profile_name,)
+                            )
+                        for profile_name, zone_id in successful_records_zones:
+                            cur.execute(
+                                "DELETE FROM route53_record_cache WHERE profile_name = %s AND zone_id = %s AND cached_at < NOW()",
+                                (profile_name, zone_id)
+                            )
+                        for profile_name in successful_zones_profiles:
+                            cur.execute(
+                                "DELETE FROM route53_record_cache WHERE profile_name = %s AND zone_id NOT IN (SELECT zone_id FROM route53_zone_cache WHERE profile_name = %s)",
+                                (profile_name, profile_name)
+                            )
+                    conn.commit()
+                logger.info(
+                    "Route 53 poll complete: %d zone(s), %d record(s) cached, %d profile error(s)",
+                    len(all_zones),
+                    len(all_records),
+                    len(profile_errors),
+                )
+            except Exception as exc:
+                logger.error("Failed to write Route 53 cache to DB: %s", exc)
+    except RuntimeError as exc:
+        if "already in progress" in str(exc):
+            return
+        raise
 
 
 # ── Scheduler lifecycle ───────────────────────────────────────────────────────
@@ -1059,7 +1203,16 @@ def _build_jobstore():
         return None
 
 
-_scheduler: BackgroundScheduler | None = None
+def poll_ssl() -> None:
+    """Fetch SSL certificate data for all domains with concurrency lock protection."""
+    from ssl_checker import refresh_all_domains
+    try:
+        with running_poll_lock("ssl"):
+            refresh_all_domains()
+    except RuntimeError as exc:
+        if "already in progress" in str(exc):
+            return
+        raise
 
 
 def start_scheduler() -> None:
@@ -1068,12 +1221,11 @@ def start_scheduler() -> None:
 
     interval = _load_persisted_interval() or DEFAULT_INTERVAL_SECONDS
 
-    jobstore = _build_jobstore()
-    jobstores = {"default": jobstore} if jobstore else {}
-
+    # Use in-memory jobstore only. The poll interval is already persisted in
+    # scheduler_meta, so a SQLAlchemy jobstore adds no value and causes stale
+    # next_run_time entries to be loaded on restart, breaking the schedule.
     _scheduler = BackgroundScheduler(
-        jobstores=jobstores,
-        executors={"default": ThreadPoolExecutor(2)},
+        executors={"default": ThreadPoolExecutor(10)},
         job_defaults={"coalesce": True, "max_instances": 1, "misfire_grace_time": 60},
     )
 
@@ -1133,7 +1285,6 @@ def start_scheduler() -> None:
 
     # SSL certificates — daily refresh is sufficient; use 86400 s but honour
     # whatever interval the user has configured (shorter interval = more frequent checks).
-    from ssl_checker import refresh_all_domains as poll_ssl
     _scheduler.add_job(
         poll_ssl,
         trigger="interval",
@@ -1242,8 +1393,7 @@ def trigger_poll() -> dict:
     iam_thread    = threading.Thread(target=poll_iam,      daemon=True, name="iam-manual-poll")
     ses_thread    = threading.Thread(target=poll_ses,      daemon=True, name="ses-manual-poll")
     r53_thread    = threading.Thread(target=poll_route53,  daemon=True, name="route53-manual-poll")
-    from ssl_checker import refresh_all_domains as _ssl_poll
-    ssl_thread    = threading.Thread(target=_ssl_poll,     daemon=True, name="ssl-manual-poll")
+    ssl_thread    = threading.Thread(target=poll_ssl,     daemon=True, name="ssl-manual-poll")
     ec2_thread.start()
     s3_thread.start()
     lambda_thread.start()

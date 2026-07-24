@@ -10,8 +10,38 @@ if not DATABASE_URL:
     raise RuntimeError("DATABASE_URL environment variable is not set")
 
 
+from psycopg2.pool import ThreadedConnectionPool
+from contextlib import contextmanager
+import threading
+
+_pool = None
+_pool_lock = threading.Lock()
+
+def _init_pool():
+    global _pool
+    if _pool is None:
+        with _pool_lock:
+            if _pool is None:
+                _pool = ThreadedConnectionPool(
+                    minconn=2,
+                    maxconn=20,
+                    dsn=DATABASE_URL,
+                    cursor_factory=psycopg2.extras.RealDictCursor
+                )
+
+
+@contextmanager
 def get_connection():
-    return psycopg2.connect(DATABASE_URL, cursor_factory=psycopg2.extras.RealDictCursor)
+    _init_pool()
+    conn = _pool.getconn()
+    try:
+        yield conn
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        _pool.putconn(conn)
 
 
 def init_db():
